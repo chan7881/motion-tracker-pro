@@ -6,7 +6,8 @@ import { componentTagger } from "lovable-tagger";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   // GitHub Pages 배포를 위한 base 경로 설정
-  base: process.env.NODE_ENV === 'production' ? '/motion-tracker-pro/' : '/',
+  // 저장소 이름으로 변경하세요 (예: base: '/motion-tracker/')
+  base: process.env.NODE_ENV === 'production' ? '/' : '/',
   server: {
     host: "::",
     port: 8080,
