@@ -8,8 +8,11 @@ import { Label } from '@/components/ui/label';
 import { VideoCanvas, VideoCanvasHandle } from '@/components/VideoCanvas';
 import { useVideoFrame } from '@/hooks/useVideoFrame';
 import { useROISelection } from '@/hooks/useROISelection';
+import { useObjectTracking } from '@/hooks/useObjectTracking';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, Camera, Play, ChevronLeft, ChevronRight, Target, BarChart3 } from 'lucide-react';
+import { analyzeMotion, smoothMotionData, MotionData } from '@/utils/motionAnalysis';
+import { Upload, Camera, Play, ChevronLeft, ChevronRight, Target, BarChart3, CheckCircle } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const Index = () => {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -17,12 +20,15 @@ const Index = () => {
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [fps, setFps] = useState(10);
   const [frameROIs, setFrameROIs] = useState<Map<number, any>>(new Map());
+  const [motionData, setMotionData] = useState<MotionData[]>([]);
+  const [activeChart, setActiveChart] = useState<'position' | 'velocity' | 'acceleration'>('position');
   
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoCanvasRef = useRef<VideoCanvasHandle>(null);
   
   const { extractedFrames, isExtracting, progress, extractFrames, reset } = useVideoFrame();
+  const { isTracking, progress: trackingProgress, trackObjectAcrossFrames } = useObjectTracking();
   
   // Create a ref object that dynamically gets the canvas from VideoCanvas
   const canvasRefForROI = useRef<HTMLCanvasElement | null>(null);
@@ -169,28 +175,101 @@ const Index = () => {
 
   const handlePrevFrame = useCallback(() => {
     if (currentFrameIndex > 0) {
+      clearROI(); // Clear current ROI when changing frames
       setCurrentFrameIndex(prev => prev - 1);
     }
-  }, [currentFrameIndex]);
+  }, [currentFrameIndex, clearROI]);
 
   const handleNextFrame = useCallback(() => {
     if (currentFrameIndex < extractedFrames.length - 1) {
+      clearROI(); // Clear current ROI when changing frames
       setCurrentFrameIndex(prev => prev + 1);
     }
-  }, [currentFrameIndex, extractedFrames.length]);
+  }, [currentFrameIndex, extractedFrames.length, clearROI]);
 
   const handleSaveROI = useCallback(() => {
     if (roi) {
       setFrameROIs(prev => new Map(prev).set(currentFrameIndex, roi));
+      clearROI(); // Clear after saving
       toast({
-        title: "ROI saved",
-        description: `ROI saved for frame ${currentFrameIndex + 1}`
+        title: "ROI 저장됨",
+        description: `프레임 ${currentFrameIndex + 1}의 ROI가 저장되었습니다`
       });
     }
-  }, [roi, currentFrameIndex, toast]);
+  }, [roi, currentFrameIndex, toast, clearROI]);
+
+  const handleCompleteROISelection = useCallback(async () => {
+    if (frameROIs.size === 0) {
+      toast({
+        title: "ROI 없음",
+        description: "먼저 최소 한 프레임에 ROI를 선택해주세요",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Find first frame with ROI
+    const firstFrameWithROI = Math.min(...Array.from(frameROIs.keys()));
+    const initialROI = frameROIs.get(firstFrameWithROI);
+
+    if (!initialROI) return;
+
+    try {
+      // Convert canvas frames to data URLs
+      const frameDataUrls = extractedFrames.map(frame => frame.canvas.toDataURL());
+      
+      const trackedROIs = await trackObjectAcrossFrames(
+        frameDataUrls,
+        initialROI,
+        firstFrameWithROI,
+        (current, total) => {
+          // Progress callback
+        }
+      );
+
+      // Merge tracked ROIs with existing ROIs (prefer existing)
+      const mergedROIs = new Map(trackedROIs);
+      frameROIs.forEach((roi, frameIndex) => {
+        mergedROIs.set(frameIndex, roi);
+      });
+
+      setFrameROIs(mergedROIs);
+
+      // Analyze motion
+      const motion = analyzeMotion(mergedROIs, fps);
+      const smoothedMotion = smoothMotionData(motion, 3);
+      setMotionData(smoothedMotion);
+
+      setCurrentTab('analyze');
+      
+      toast({
+        title: "추적 완료",
+        description: `${mergedROIs.size}개 프레임에서 물체를 추적하고 운동을 분석했습니다`
+      });
+    } catch (error) {
+      toast({
+        title: "추적 실패",
+        description: error instanceof Error ? error.message : "물체 추적에 실패했습니다",
+        variant: "destructive"
+      });
+    }
+  }, [frameROIs, extractedFrames, currentFrameIndex, fps, trackObjectAcrossFrames, toast]);
 
   const currentFrame = extractedFrames[currentFrameIndex] || null;
   const showVideo = currentTab === 'upload' || (currentTab === 'extract' && extractedFrames.length === 0);
+
+  // Prepare chart data
+  const chartData = motionData.map(d => ({
+    time: Number(d.time.toFixed(3)),
+    x: Number(d.x.toFixed(3)),
+    y: Number(d.y.toFixed(3)),
+    vx: Number(d.vx.toFixed(3)),
+    vy: Number(d.vy.toFixed(3)),
+    speed: Number(d.speed.toFixed(3)),
+    ax: Number(d.ax.toFixed(3)),
+    ay: Number(d.ay.toFixed(3)),
+    acceleration: Number(d.acceleration.toFixed(3))
+  }));
 
   return (
     <div className="min-h-screen bg-background">
@@ -401,10 +480,20 @@ const Index = () => {
                       ROI 초기화
                     </Button>
 
-                    <div className="pt-4 border-t border-border">
+                    <div className="pt-4 border-t border-border space-y-3">
                       <p className="text-xs text-muted-foreground">
                         저장된 ROI: {frameROIs.size} / {extractedFrames.length}
                       </p>
+                      
+                      <Button
+                        onClick={handleCompleteROISelection}
+                        disabled={frameROIs.size === 0 || isTracking}
+                        className="w-full bg-gradient-primary hover:opacity-90"
+                        size="lg"
+                      >
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        {isTracking ? `추적 중... ${trackingProgress}%` : 'ROI 선택 완료'}
+                      </Button>
                     </div>
                   </>
                 ) : (
@@ -415,15 +504,94 @@ const Index = () => {
               </TabsContent>
 
               <TabsContent value="analyze" className="mt-0 space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  분석 결과가 여기에 표시됩니다
-                </p>
-                {frameROIs.size > 0 && (
+                {motionData.length > 0 ? (
+                  <>
+                    <Tabs value={activeChart} onValueChange={(v) => setActiveChart(v as any)} className="w-full">
+                      <TabsList className="grid w-full grid-cols-3">
+                        <TabsTrigger value="position">위치</TabsTrigger>
+                        <TabsTrigger value="velocity">속도</TabsTrigger>
+                        <TabsTrigger value="acceleration">가속도</TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="position" className="space-y-2">
+                        <div className="h-48">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="time" label={{ value: '시간 (s)', position: 'insideBottom', offset: -5 }} />
+                              <YAxis label={{ value: '위치 (m)', angle: -90, position: 'insideLeft' }} />
+                              <Tooltip />
+                              <Legend />
+                              <Line type="monotone" dataKey="x" stroke="hsl(var(--primary))" name="X 위치" />
+                              <Line type="monotone" dataKey="y" stroke="hsl(var(--secondary))" name="Y 위치" />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent value="velocity" className="space-y-2">
+                        <div className="h-48">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="time" label={{ value: '시간 (s)', position: 'insideBottom', offset: -5 }} />
+                              <YAxis label={{ value: '속도 (m/s)', angle: -90, position: 'insideLeft' }} />
+                              <Tooltip />
+                              <Legend />
+                              <Line type="monotone" dataKey="speed" stroke="hsl(var(--primary))" name="속력" />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent value="acceleration" className="space-y-2">
+                        <div className="h-48">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="time" label={{ value: '시간 (s)', position: 'insideBottom', offset: -5 }} />
+                              <YAxis label={{ value: '가속도 (m/s²)', angle: -90, position: 'insideLeft' }} />
+                              <Tooltip />
+                              <Legend />
+                              <Line type="monotone" dataKey="acceleration" stroke="hsl(var(--primary))" name="가속도" />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </TabsContent>
+                    </Tabs>
+
+                    <div className="pt-4 border-t border-border space-y-2">
+                      <p className="text-sm font-medium">분석 통계</p>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="p-2 bg-secondary rounded">
+                          <p className="text-muted-foreground">추적 프레임</p>
+                          <p className="font-semibold">{frameROIs.size}개</p>
+                        </div>
+                        <div className="p-2 bg-secondary rounded">
+                          <p className="text-muted-foreground">분석 시간</p>
+                          <p className="font-semibold">{(motionData[motionData.length - 1]?.time || 0).toFixed(2)}s</p>
+                        </div>
+                        <div className="p-2 bg-secondary rounded">
+                          <p className="text-muted-foreground">최대 속력</p>
+                          <p className="font-semibold">{Math.max(...motionData.map(d => d.speed)).toFixed(2)} m/s</p>
+                        </div>
+                        <div className="p-2 bg-secondary rounded">
+                          <p className="text-muted-foreground">최대 가속도</p>
+                          <p className="font-semibold">{Math.max(...motionData.map(d => d.acceleration)).toFixed(2)} m/s²</p>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
                   <div className="space-y-2">
-                    <p className="text-sm font-medium">추적 통계</p>
-                    <p className="text-xs text-muted-foreground">
-                      {frameROIs.size}개 프레임에 ROI가 지정되었습니다
+                    <p className="text-sm text-muted-foreground">
+                      ROI 선택을 완료하면 분석 결과가 표시됩니다
                     </p>
+                    {frameROIs.size > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {frameROIs.size}개 프레임에 ROI가 지정되었습니다
+                      </p>
+                    )}
                   </div>
                 )}
               </TabsContent>
