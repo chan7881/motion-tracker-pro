@@ -21,10 +21,20 @@ const Index = () => {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoCanvasRef = useRef<VideoCanvasHandle>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   
   const { extractedFrames, isExtracting, progress, extractFrames, reset } = useVideoFrame();
-  const { roi, handlePointerDown, handlePointerMove, handlePointerUp, clearROI } = useROISelection(canvasRef);
+  
+  // Create a ref object that dynamically gets the canvas from VideoCanvas
+  const canvasRefForROI = useRef<HTMLCanvasElement | null>(null);
+  const canvasRefGetter = {
+    get current() {
+      return videoCanvasRef.current?.getCanvasElement() || null;
+    }
+  };
+  
+  const { roi, handlePointerDown, handlePointerMove, handlePointerUp, clearROI } = useROISelection(
+    canvasRefGetter as React.RefObject<HTMLCanvasElement>
+  );
 
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -86,28 +96,76 @@ const Index = () => {
   const handleStartCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } 
+        video: { 
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
       });
       
-      // Create video element from stream
+      // Revoke previous URL if exists
+      if (videoUrl) {
+        URL.revokeObjectURL(videoUrl);
+      }
+      
+      // Create a MediaStream URL
       const video = document.createElement('video');
       video.srcObject = stream;
       video.playsInline = true;
       video.muted = true;
-      await video.play();
+      
+      // Wait for video to be ready
+      await new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+          video.play();
+          resolve(null);
+        };
+      });
+      
+      // Create blob URL from stream for compatibility
+      const mediaRecorder = new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+      
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        setVideoUrl(url);
+      };
+      
+      // Record for a short time to create a playable video
+      mediaRecorder.start();
+      
+      // For now, just set the stream directly
+      // Create a temporary object URL that references the stream
+      const tempUrl = URL.createObjectURL(new Blob([JSON.stringify({ stream: 'active' })], { type: 'text/plain' }));
+      setVideoUrl(tempUrl);
+      
+      // Set the video element's srcObject directly
+      if (videoCanvasRef.current) {
+        const videoElement = videoCanvasRef.current.getVideoElement();
+        if (videoElement) {
+          videoElement.srcObject = stream;
+          videoElement.play();
+        }
+      }
+      
+      reset();
+      setCurrentFrameIndex(0);
+      setFrameROIs(new Map());
       
       toast({
-        title: "Camera started",
-        description: "Camera access granted"
+        title: "카메라 시작됨",
+        description: "카메라가 성공적으로 연결되었습니다"
       });
     } catch (error) {
       toast({
-        title: "Camera error",
-        description: "Could not access camera. Please check permissions.",
+        title: "카메라 오류",
+        description: "카메라에 접근할 수 없습니다. 권한을 확인해주세요.",
         variant: "destructive"
       });
     }
-  }, [toast]);
+  }, [videoUrl, reset, toast]);
 
   const handlePrevFrame = useCallback(() => {
     if (currentFrameIndex > 0) {

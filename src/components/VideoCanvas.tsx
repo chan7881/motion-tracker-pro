@@ -14,6 +14,7 @@ interface VideoCanvasProps {
 
 export interface VideoCanvasHandle {
   getVideoElement: () => HTMLVideoElement | null;
+  getCanvasElement: () => HTMLCanvasElement | null;
 }
 
 export const VideoCanvas = forwardRef<VideoCanvasHandle, VideoCanvasProps>(({
@@ -29,7 +30,8 @@ export const VideoCanvas = forwardRef<VideoCanvasHandle, VideoCanvasProps>(({
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useImperativeHandle(ref, () => ({
-    getVideoElement: () => videoRef.current
+    getVideoElement: () => videoRef.current,
+    getCanvasElement: () => canvasRef.current
   }));
 
   // Draw current frame or video
