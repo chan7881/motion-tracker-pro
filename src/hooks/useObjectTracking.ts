@@ -16,6 +16,9 @@ export const useObjectTracking = () => {
 
   const loadModel = useCallback(async () => {
     try {
+      // Configure WASM paths for onnxruntime-web
+      ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.2/dist/';
+      
       const modelSession = await ort.InferenceSession.create('/yolov8n.onnx', {
         executionProviders: ['wasm'],
       });
