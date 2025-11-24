@@ -11,7 +11,7 @@ import { useROISelection } from '@/hooks/useROISelection';
 import { useObjectTracking } from '@/hooks/useObjectTracking';
 import { useToast } from '@/hooks/use-toast';
 import { analyzeMotion, smoothMotionData, MotionData } from '@/utils/motionAnalysis';
-import { Upload, Camera, Play, ChevronLeft, ChevronRight, Target, BarChart3, CheckCircle } from 'lucide-react';
+import { Upload, Camera, Play, ChevronLeft, ChevronRight, Target, BarChart3, CheckCircle, Download, Video } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const Index = () => {
@@ -22,6 +22,8 @@ const Index = () => {
   const [frameROIs, setFrameROIs] = useState<Map<number, any>>(new Map());
   const [motionData, setMotionData] = useState<MotionData[]>([]);
   const [activeChart, setActiveChart] = useState<'position' | 'velocity' | 'acceleration'>('position');
+  const [videoWithROI, setVideoWithROI] = useState<string | null>(null);
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -65,11 +67,15 @@ const Index = () => {
     reset();
     setCurrentFrameIndex(0);
     setFrameROIs(new Map());
+    setVideoWithROI(null);
     
     toast({
       title: "Video loaded",
       description: `${file.name} has been loaded successfully`
     });
+    
+    // Auto-advance to extract tab
+    setCurrentTab('extract');
   }, [videoUrl, reset, toast]);
 
   const handleExtractFrames = useCallback(async () => {
@@ -85,11 +91,13 @@ const Index = () => {
 
     try {
       await extractFrames(videoElement, fps);
-      setCurrentTab('frames');
       toast({
         title: "Frames extracted",
         description: `Successfully extracted ${Math.floor(videoElement.duration * fps)} frames`
       });
+      
+      // Auto-advance to ROI selection tab
+      setCurrentTab('roi');
     } catch (error) {
       toast({
         title: "Extraction failed",
@@ -159,11 +167,15 @@ const Index = () => {
       reset();
       setCurrentFrameIndex(0);
       setFrameROIs(new Map());
+      setVideoWithROI(null);
       
       toast({
         title: "카메라 시작됨",
         description: "카메라가 성공적으로 연결되었습니다"
       });
+      
+      // Auto-advance to extract tab
+      setCurrentTab('extract');
     } catch (error) {
       toast({
         title: "카메라 오류",
@@ -240,6 +252,9 @@ const Index = () => {
       const smoothedMotion = smoothMotionData(motion, 3);
       setMotionData(smoothedMotion);
 
+      // Generate video with ROI
+      await generateVideoWithROI(mergedROIs);
+
       setCurrentTab('analyze');
       
       toast({
@@ -254,6 +269,132 @@ const Index = () => {
       });
     }
   }, [frameROIs, extractedFrames, currentFrameIndex, fps, trackObjectAcrossFrames, toast]);
+
+  const generateVideoWithROI = useCallback(async (rois: Map<number, any>) => {
+    if (extractedFrames.length === 0) return;
+
+    setIsGeneratingVideo(true);
+    
+    try {
+      // Create a canvas for video generation
+      const canvas = document.createElement('canvas');
+      const firstFrame = extractedFrames[0].canvas;
+      canvas.width = firstFrame.width;
+      canvas.height = firstFrame.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Failed to get canvas context');
+
+      // Create video stream from canvas
+      const stream = canvas.captureStream(fps);
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'video/webm;codecs=vp9',
+        videoBitsPerSecond: 2500000
+      });
+
+      const chunks: Blob[] = [];
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        setVideoWithROI(url);
+        setIsGeneratingVideo(false);
+      };
+
+      mediaRecorder.start();
+
+      // Draw each frame with ROI
+      for (let i = 0; i < extractedFrames.length; i++) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(extractedFrames[i].canvas, 0, 0);
+
+        // Draw ROI if exists
+        const roi = rois.get(i);
+        if (roi) {
+          ctx.strokeStyle = '#00ff00';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(roi.x, roi.y, roi.width, roi.height);
+          
+          // Draw center point
+          const centerX = roi.x + roi.width / 2;
+          const centerY = roi.y + roi.height / 2;
+          ctx.fillStyle = '#00ff00';
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, 5, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+
+        // Wait for frame duration
+        await new Promise(resolve => setTimeout(resolve, 1000 / fps));
+      }
+
+      mediaRecorder.stop();
+    } catch (error) {
+      setIsGeneratingVideo(false);
+      toast({
+        title: "영상 생성 실패",
+        description: error instanceof Error ? error.message : "영상을 생성할 수 없습니다",
+        variant: "destructive"
+      });
+    }
+  }, [extractedFrames, fps, toast]);
+
+  const downloadVideoWithROI = useCallback(() => {
+    if (!videoWithROI) return;
+    
+    const a = document.createElement('a');
+    a.href = videoWithROI;
+    a.download = `motion-tracking-${Date.now()}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    toast({
+      title: "다운로드 시작",
+      description: "ROI가 표시된 영상 다운로드가 시작되었습니다"
+    });
+  }, [videoWithROI, toast]);
+
+  const downloadCSV = useCallback(() => {
+    if (motionData.length === 0) return;
+
+    // Create CSV content
+    const headers = ['Time (s)', 'X (m)', 'Y (m)', 'Vx (m/s)', 'Vy (m/s)', 'Speed (m/s)', 'Ax (m/s²)', 'Ay (m/s²)', 'Acceleration (m/s²)'];
+    const rows = motionData.map(d => [
+      d.time.toFixed(4),
+      d.x.toFixed(4),
+      d.y.toFixed(4),
+      d.vx.toFixed(4),
+      d.vy.toFixed(4),
+      d.speed.toFixed(4),
+      d.ax.toFixed(4),
+      d.ay.toFixed(4),
+      d.acceleration.toFixed(4)
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `motion-analysis-${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast({
+      title: "CSV 다운로드",
+      description: "분석 결과가 CSV 파일로 다운로드되었습니다"
+    });
+  }, [motionData, toast]);
 
   const currentFrame = extractedFrames[currentFrameIndex] || null;
   const showVideo = currentTab === 'upload' || (currentTab === 'extract' && extractedFrames.length === 0);
@@ -580,6 +721,36 @@ const Index = () => {
                           <p className="font-semibold">{Math.max(...motionData.map(d => d.acceleration)).toFixed(2)} m/s²</p>
                         </div>
                       </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-border space-y-2">
+                      <p className="text-sm font-medium">다운로드</p>
+                      
+                      <Button
+                        onClick={downloadCSV}
+                        className="w-full bg-gradient-primary hover:opacity-90"
+                        size="lg"
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        CSV 파일 다운로드
+                      </Button>
+
+                      {isGeneratingVideo ? (
+                        <Button disabled className="w-full" size="lg">
+                          <Video className="w-4 h-4 mr-2 animate-spin" />
+                          영상 생성 중...
+                        </Button>
+                      ) : videoWithROI ? (
+                        <Button
+                          onClick={downloadVideoWithROI}
+                          variant="outline"
+                          className="w-full"
+                          size="lg"
+                        >
+                          <Video className="w-4 h-4 mr-2" />
+                          ROI 영상 다운로드
+                        </Button>
+                      ) : null}
                     </div>
                   </>
                 ) : (
