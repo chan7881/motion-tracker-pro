@@ -315,15 +315,20 @@ const Index = () => {
         if (roi) {
           ctx.strokeStyle = '#00ff00';
           ctx.lineWidth = 3;
-          ctx.strokeRect(roi.x, roi.y, roi.width, roi.height);
+          ctx.strokeRect(roi.x, roi.y, roi.w, roi.h);
           
           // Draw center point
-          const centerX = roi.x + roi.width / 2;
-          const centerY = roi.y + roi.height / 2;
+          const centerX = roi.x + roi.w / 2;
+          const centerY = roi.y + roi.h / 2;
           ctx.fillStyle = '#00ff00';
           ctx.beginPath();
           ctx.arc(centerX, centerY, 5, 0, 2 * Math.PI);
           ctx.fill();
+          
+          // Draw frame number
+          ctx.fillStyle = '#00ff00';
+          ctx.font = '16px Arial';
+          ctx.fillText(`Frame ${i + 1}`, roi.x, roi.y - 5);
         }
 
         // Wait for frame duration
@@ -446,16 +451,27 @@ const Index = () => {
 
           <div className="grid md:grid-cols-3 gap-6">
             <Card className="md:col-span-2 p-6 bg-card border-border">
-              <VideoCanvas
-                ref={videoCanvasRef}
-                videoUrl={videoUrl}
-                currentFrame={currentFrame}
-                roi={currentTab === 'roi' ? roi : frameROIs.get(currentFrameIndex) || null}
-                onPointerDown={currentTab === 'roi' ? handlePointerDown : undefined}
-                onPointerMove={currentTab === 'roi' ? handlePointerMove : undefined}
-                onPointerUp={currentTab === 'roi' ? handlePointerUp : undefined}
-                showVideo={showVideo}
-              />
+              {currentTab === 'analyze' && videoWithROI ? (
+                <div className="w-full aspect-video bg-black rounded-lg overflow-hidden">
+                  <video
+                    src={videoWithROI}
+                    controls
+                    loop
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+              ) : (
+                <VideoCanvas
+                  ref={videoCanvasRef}
+                  videoUrl={videoUrl}
+                  currentFrame={currentFrame}
+                  roi={currentTab === 'roi' ? roi : frameROIs.get(currentFrameIndex) || null}
+                  onPointerDown={currentTab === 'roi' ? handlePointerDown : undefined}
+                  onPointerMove={currentTab === 'roi' ? handlePointerMove : undefined}
+                  onPointerUp={currentTab === 'roi' ? handlePointerUp : undefined}
+                  showVideo={showVideo}
+                />
+              )}
             </Card>
 
             <Card className="p-6 bg-card border-border space-y-4">
