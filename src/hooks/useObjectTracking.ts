@@ -131,24 +131,25 @@ function preprocessImage(
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
   
-  // Extract ROI region with some padding
-  const padding = 50;
-  const x = Math.max(0, roi.x - padding);
-  const y = Math.max(0, roi.y - padding);
-  const w = Math.min(imageData.width - x, roi.w + padding * 2);
-  const h = Math.min(imageData.height - y, roi.h + padding * 2);
+  // Use larger search region for better tracking
+  const padding = Math.max(roi.w, roi.h) * 1.5;
+  const x = Math.max(0, Math.floor(roi.x - padding));
+  const y = Math.max(0, Math.floor(roi.y - padding));
+  const w = Math.min(imageData.width - x, Math.ceil(roi.w + padding * 2));
+  const h = Math.min(imageData.height - y, Math.ceil(roi.h + padding * 2));
   
   canvas.width = 640;
   canvas.height = 640;
   
-  // Draw and resize ROI region
+  // Create temporary canvas for ROI extraction
   const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = w;
-  tempCanvas.height = h;
   const tempCtx = tempCanvas.getContext('2d')!;
-  tempCtx.putImageData(imageData, -x, -y, x, y, w, h);
+  tempCanvas.width = imageData.width;
+  tempCanvas.height = imageData.height;
+  tempCtx.putImageData(imageData, 0, 0);
   
-  ctx.drawImage(tempCanvas, 0, 0, 640, 640);
+  // Draw extracted region to main canvas and resize to 640x640
+  ctx.drawImage(tempCanvas, x, y, w, h, 0, 0, 640, 640);
   
   const resizedData = ctx.getImageData(0, 0, 640, 640);
   
@@ -180,8 +181,9 @@ function postprocessResults(
   
   const targetCenterX = targetROI.x + targetROI.w / 2;
   const targetCenterY = targetROI.y + targetROI.h / 2;
+  const targetArea = targetROI.w * targetROI.h;
   
-  // Process detections
+  // Process detections with lower threshold for better tracking
   for (let i = 0; i < 8400; i++) {
     const offset = i;
     const x = data[offset];
@@ -196,29 +198,50 @@ function postprocessResults(
       if (score > maxScore) maxScore = score;
     }
     
-    if (maxScore > 0.25) {
-      // Calculate distance from target ROI center
+    // Lower threshold for continuous tracking
+    if (maxScore > 0.15) {
+      // Calculate absolute coordinates
       const detCenterX = x * originalWidth / 640;
       const detCenterY = y * originalHeight / 640;
+      const detW = w * originalWidth / 640;
+      const detH = h * originalHeight / 640;
+      const detArea = detW * detH;
+      
+      // Calculate distance from target ROI center
       const distance = Math.sqrt(
         Math.pow(detCenterX - targetCenterX, 2) + 
         Math.pow(detCenterY - targetCenterY, 2)
       );
       
-      // Prefer detections close to target with high confidence
-      const score = maxScore / (1 + distance / 100);
+      // Calculate size similarity
+      const areaRatio = Math.min(detArea, targetArea) / Math.max(detArea, targetArea);
+      
+      // Combined score: confidence, proximity, and size similarity
+      const proximityScore = 1 / (1 + distance / 50);
+      const score = maxScore * proximityScore * areaRatio;
       
       if (score > bestScore) {
         bestScore = score;
         bestDetection = {
           x: (x - w / 2) * originalWidth / 640,
           y: (y - h / 2) * originalHeight / 640,
-          w: w * originalWidth / 640,
-          h: h * originalHeight / 640,
+          w: detW,
+          h: detH,
           confidence: maxScore
         };
       }
     }
+  }
+  
+  // If no detection found, return target ROI with low confidence
+  if (!bestDetection) {
+    return {
+      x: targetROI.x,
+      y: targetROI.y,
+      w: targetROI.w,
+      h: targetROI.h,
+      confidence: 0
+    };
   }
   
   return bestDetection;
