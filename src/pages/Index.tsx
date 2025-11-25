@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { VideoCanvas, VideoCanvasHandle } from '@/components/VideoCanvas';
 import { useVideoFrame } from '@/hooks/useVideoFrame';
 import { useROISelection } from '@/hooks/useROISelection';
-import { useObjectTracking } from '@/hooks/useObjectTracking';
+import { useOpticalFlowTracking } from '@/hooks/useOpticalFlowTracking';
 import { useToast } from '@/hooks/use-toast';
 import { analyzeMotion, smoothMotionData, MotionData } from '@/utils/motionAnalysis';
 import { Upload, Camera, Play, ChevronLeft, ChevronRight, Target, BarChart3, CheckCircle, Download, Video } from 'lucide-react';
@@ -30,7 +30,7 @@ const Index = () => {
   const videoCanvasRef = useRef<VideoCanvasHandle>(null);
   
   const { extractedFrames, isExtracting, progress, extractFrames, reset } = useVideoFrame();
-  const { isTracking, progress: trackingProgress, trackObjectAcrossFrames } = useObjectTracking();
+  const { isTracking, progress: trackingProgress, trackObjectAcrossFrames } = useOpticalFlowTracking();
   
   // Create a ref object that dynamically gets the canvas from VideoCanvas
   const canvasRefForROI = useRef<HTMLCanvasElement | null>(null);
