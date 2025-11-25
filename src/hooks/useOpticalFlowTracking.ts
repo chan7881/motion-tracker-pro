@@ -31,17 +31,36 @@ export const useOpticalFlowTracking = () => {
     const trackedROIs = new Map<number, TrackedROI>();
 
     try {
+      // Validate inputs
+      if (!initialROI || typeof initialROI.x !== 'number' || typeof initialROI.y !== 'number' || 
+          typeof initialROI.w !== 'number' || typeof initialROI.h !== 'number') {
+        throw new Error('유효하지 않은 ROI 데이터입니다.');
+      }
+
+      if (!frames || frames.length === 0) {
+        throw new Error('프레임 데이터가 없습니다.');
+      }
+
+      if (startFrameIndex < 0 || startFrameIndex >= frames.length) {
+        throw new Error('유효하지 않은 시작 프레임 인덱스입니다.');
+      }
+
       // 초기 프레임에서 특징점 추출
       const startFrame = await loadImageData(frames[startFrameIndex]);
       const initialPoints = detectKeyPoints(startFrame, initialROI);
       
       if (initialPoints.length === 0) {
-        throw new Error('초기 ROI에서 특징점을 찾을 수 없습니다.');
+        throw new Error('초기 ROI에서 특징점을 찾을 수 없습니다. ROI를 좀 더 크게 선택하거나 특징이 뚜렷한 영역을 선택해주세요.');
       }
+
+      console.log(`초기 특징점 ${initialPoints.length}개 감지됨`);
 
       // 초기 ROI 저장
       trackedROIs.set(startFrameIndex, {
-        ...initialROI,
+        x: initialROI.x,
+        y: initialROI.y,
+        w: initialROI.w,
+        h: initialROI.h,
         confidence: 1.0
       });
 
@@ -55,24 +74,46 @@ export const useOpticalFlowTracking = () => {
         // Optical Flow로 특징점 추적
         const trackedPoints = trackPoints(prevFrame, currFrame, prevPoints);
         
-        if (trackedPoints.length > 0) {
+        if (trackedPoints.length >= initialPoints.length * 0.3) {
+          // 최소 30% 이상의 특징점이 추적되어야 유효
           const roi = calculateROIFromPoints(trackedPoints, initialROI.w, initialROI.h);
-          const confidence = trackedPoints.length / initialPoints.length;
+          const confidence = Math.min(trackedPoints.length / initialPoints.length, 1.0);
           
           trackedROIs.set(i, {
-            ...roi,
-            confidence: Math.min(confidence, 1.0)
+            x: roi.x,
+            y: roi.y,
+            w: roi.w,
+            h: roi.h,
+            confidence
           });
           
           prevFrame = currFrame;
           prevPoints = trackedPoints;
+          
+          console.log(`프레임 ${i}: ${trackedPoints.length}개 특징점 추적 (신뢰도: ${(confidence * 100).toFixed(1)}%)`);
         } else {
-          // 추적 실패 시 이전 ROI 사용
-          const prevROI = trackedROIs.get(i - 1)!;
-          trackedROIs.set(i, {
-            ...prevROI,
-            confidence: 0
-          });
+          // 추적 실패 시 이전 ROI 사용 (신뢰도 0)
+          const prevROI = trackedROIs.get(i - 1);
+          if (prevROI) {
+            trackedROIs.set(i, {
+              x: prevROI.x,
+              y: prevROI.y,
+              w: prevROI.w,
+              h: prevROI.h,
+              confidence: 0
+            });
+          } else {
+            // 이전 ROI도 없으면 초기 ROI 사용
+            trackedROIs.set(i, {
+              x: initialROI.x,
+              y: initialROI.y,
+              w: initialROI.w,
+              h: initialROI.h,
+              confidence: 0
+            });
+          }
+          
+          console.log(`프레임 ${i}: 추적 실패 (${trackedPoints.length}개 특징점만 감지)`);
         }
         
         onProgress(i - startFrameIndex + 1, frames.length);
@@ -89,23 +130,46 @@ export const useOpticalFlowTracking = () => {
         // Optical Flow로 특징점 추적 (역방향)
         const trackedPoints = trackPoints(prevFrame, currFrame, prevPoints);
         
-        if (trackedPoints.length > 0) {
+        if (trackedPoints.length >= initialPoints.length * 0.3) {
+          // 최소 30% 이상의 특징점이 추적되어야 유효
           const roi = calculateROIFromPoints(trackedPoints, initialROI.w, initialROI.h);
-          const confidence = trackedPoints.length / initialPoints.length;
+          const confidence = Math.min(trackedPoints.length / initialPoints.length, 1.0);
           
           trackedROIs.set(i, {
-            ...roi,
-            confidence: Math.min(confidence, 1.0)
+            x: roi.x,
+            y: roi.y,
+            w: roi.w,
+            h: roi.h,
+            confidence
           });
           
           prevFrame = currFrame;
           prevPoints = trackedPoints;
+          
+          console.log(`프레임 ${i}: ${trackedPoints.length}개 특징점 추적 (신뢰도: ${(confidence * 100).toFixed(1)}%)`);
         } else {
-          const nextROI = trackedROIs.get(i + 1)!;
-          trackedROIs.set(i, {
-            ...nextROI,
-            confidence: 0
-          });
+          // 추적 실패 시 다음 ROI 사용 (신뢰도 0)
+          const nextROI = trackedROIs.get(i + 1);
+          if (nextROI) {
+            trackedROIs.set(i, {
+              x: nextROI.x,
+              y: nextROI.y,
+              w: nextROI.w,
+              h: nextROI.h,
+              confidence: 0
+            });
+          } else {
+            // 다음 ROI도 없으면 초기 ROI 사용
+            trackedROIs.set(i, {
+              x: initialROI.x,
+              y: initialROI.y,
+              w: initialROI.w,
+              h: initialROI.h,
+              confidence: 0
+            });
+          }
+          
+          console.log(`프레임 ${i}: 추적 실패 (${trackedPoints.length}개 특징점만 감지)`);
         }
         
         onProgress(startFrameIndex - i, frames.length);
@@ -139,7 +203,7 @@ function detectKeyPoints(
   
   // 코너 검출을 위한 설정
   const corners: jsfeat.keypoint_t[] = [];
-  const maxCorners = 100; // ROI 내 최대 특징점 수
+  const maxCorners = 150; // ROI 내 최대 특징점 수 증가
   
   // ROI 영역에서만 코너 검출
   const x = Math.max(0, Math.floor(roi.x));
@@ -147,9 +211,9 @@ function detectKeyPoints(
   const w = Math.min(width - x, Math.ceil(roi.w));
   const h = Math.min(height - y, Math.ceil(roi.h));
   
-  // YAPE06 코너 검출기 사용
-  jsfeat.yape06.laplacian_threshold = 30;
-  jsfeat.yape06.min_eigen_value_threshold = 25;
+  // YAPE06 코너 검출기 사용 (민감도 조정)
+  jsfeat.yape06.laplacian_threshold = 20; // 더 낮춰서 더 많은 특징점 감지
+  jsfeat.yape06.min_eigen_value_threshold = 15; // 더 낮춰서 더 많은 특징점 감지
   
   jsfeat.yape06.detect(gray, corners, maxCorners);
   
@@ -201,14 +265,14 @@ function trackPoints(
     prevXY[i * 2 + 1] = prevPoints[i].y;
   }
   
-  // Lucas-Kanade Optical Flow 추적
+  // Lucas-Kanade Optical Flow 추적 (파라미터 최적화)
   jsfeat.optical_flow_lk.track(
     prevPyr,
     currPyr,
     prevXY,
     currXY,
     pointCount,
-    30, // window size
+    20, // window size - 약간 줄여서 빠른 움직임에 대응
     30, // max iterations
     status,
     0.01, // epsilon
