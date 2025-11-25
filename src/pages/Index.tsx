@@ -227,28 +227,58 @@ const Index = () => {
     if (!initialROI) return;
 
     try {
-      // Convert canvas frames to data URLs
-      const frameDataUrls = extractedFrames.map(frame => frame.canvas.toDataURL());
+      // Validate extractedFrames
+      if (!extractedFrames || extractedFrames.length === 0) {
+        throw new Error('추출된 프레임이 없습니다');
+      }
+      
+      // Convert canvas frames to data URLs with validation
+      const frameDataUrls: string[] = [];
+      for (const frame of extractedFrames) {
+        if (!frame || !frame.canvas) {
+          throw new Error('유효하지 않은 프레임 데이터입니다');
+        }
+        frameDataUrls.push(frame.canvas.toDataURL());
+      }
+      
+      console.log(`${frameDataUrls.length}개 프레임으로 추적 시작`);
+      console.log('초기 ROI:', initialROI);
+      console.log('시작 프레임:', firstFrameWithROI);
       
       const trackedROIs = await trackObjectAcrossFrames(
         frameDataUrls,
         initialROI,
         firstFrameWithROI,
         (current, total) => {
-          // Progress callback
+          console.log(`추적 진행: ${current}/${total}`);
         }
       );
 
+      console.log(`추적 완료: ${trackedROIs.size}개 프레임`);
+      
+      // Validate tracked ROIs
+      if (trackedROIs.size === 0) {
+        throw new Error('추적된 ROI가 없습니다. 다시 시도해주세요.');
+      }
+      
       // Merge tracked ROIs with existing ROIs (prefer existing)
       const mergedROIs = new Map(trackedROIs);
       frameROIs.forEach((roi, frameIndex) => {
         mergedROIs.set(frameIndex, roi);
       });
 
+      console.log(`병합된 ROI: ${mergedROIs.size}개 프레임`);
       setFrameROIs(mergedROIs);
 
       // Analyze motion
+      console.log('운동 분석 시작...');
       const motion = analyzeMotion(mergedROIs, fps);
+      console.log(`운동 데이터 생성: ${motion.length}개 포인트`);
+      
+      if (motion.length === 0) {
+        throw new Error('운동 데이터를 생성할 수 없습니다');
+      }
+      
       const smoothedMotion = smoothMotionData(motion, 3);
       setMotionData(smoothedMotion);
 

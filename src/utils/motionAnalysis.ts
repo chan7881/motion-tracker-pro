@@ -32,7 +32,14 @@ export function analyzeMotion(
   
   for (let i = 0; i < sortedFrames.length; i++) {
     const frameIndex = sortedFrames[i];
-    const roi = frameROIs.get(frameIndex)!;
+    const roi = frameROIs.get(frameIndex);
+    
+    // Skip if ROI is undefined
+    if (!roi || typeof roi.x !== 'number' || typeof roi.y !== 'number' || 
+        typeof roi.w !== 'number' || typeof roi.h !== 'number') {
+      console.warn(`프레임 ${frameIndex}: 유효하지 않은 ROI 데이터`);
+      continue;
+    }
     
     // Center of ROI
     const x = (roi.x + roi.w / 2) / pixelsPerMeter;
@@ -46,8 +53,13 @@ export function analyzeMotion(
     if (i > 0 && i < sortedFrames.length - 1) {
       const prevFrame = sortedFrames[i - 1];
       const nextFrame = sortedFrames[i + 1];
-      const prevROI = frameROIs.get(prevFrame)!;
-      const nextROI = frameROIs.get(nextFrame)!;
+      const prevROI = frameROIs.get(prevFrame);
+      const nextROI = frameROIs.get(nextFrame);
+      
+      if (!prevROI || !nextROI) {
+        // Skip velocity calculation if prev or next ROI is missing
+        continue;
+      }
       
       const x_prev = (prevROI.x + prevROI.w / 2) / pixelsPerMeter;
       const y_prev = (prevROI.y + prevROI.h / 2) / pixelsPerMeter;
@@ -60,21 +72,27 @@ export function analyzeMotion(
     } else if (i > 0) {
       // Forward difference for last frame
       const prevFrame = sortedFrames[i - 1];
-      const prevROI = frameROIs.get(prevFrame)!;
-      const x_prev = (prevROI.x + prevROI.w / 2) / pixelsPerMeter;
-      const y_prev = (prevROI.y + prevROI.h / 2) / pixelsPerMeter;
+      const prevROI = frameROIs.get(prevFrame);
       
-      vx = (x - x_prev) / dt;
-      vy = (y - y_prev) / dt;
+      if (prevROI) {
+        const x_prev = (prevROI.x + prevROI.w / 2) / pixelsPerMeter;
+        const y_prev = (prevROI.y + prevROI.h / 2) / pixelsPerMeter;
+        
+        vx = (x - x_prev) / dt;
+        vy = (y - y_prev) / dt;
+      }
     } else if (i < sortedFrames.length - 1) {
       // Backward difference for first frame
       const nextFrame = sortedFrames[i + 1];
-      const nextROI = frameROIs.get(nextFrame)!;
-      const x_next = (nextROI.x + nextROI.w / 2) / pixelsPerMeter;
-      const y_next = (nextROI.y + nextROI.h / 2) / pixelsPerMeter;
+      const nextROI = frameROIs.get(nextFrame);
       
-      vx = (x_next - x) / dt;
-      vy = (y_next - y) / dt;
+      if (nextROI) {
+        const x_next = (nextROI.x + nextROI.w / 2) / pixelsPerMeter;
+        const y_next = (nextROI.y + nextROI.h / 2) / pixelsPerMeter;
+        
+        vx = (x_next - x) / dt;
+        vy = (y_next - y) / dt;
+      }
     }
     
     speed = Math.sqrt(vx * vx + vy * vy);
