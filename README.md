@@ -1,73 +1,46 @@
-# Welcome to your Lovable project
+# Motion Tracker
 
-## Project info
+동영상 속에서 움직이는 물체를 지정하면 자동으로 추적하여 위치·속도·가속도를
+분석해주는 교육용 웹 애플리케이션입니다. 과학 수업에서 실제 촬영한 영상으로
+운동을 정량적으로 분석할 때 사용할 수 있도록 만들었습니다.
 
-**URL**: https://lovable.dev/projects/3938c541-b5ec-4201-aa1d-d792350eb4d8
+## 사용 흐름
 
-## How can I edit this code?
+### 1. 촬영
+동영상을 업로드하거나 카메라로 직접 촬영합니다.
 
-There are several ways of editing your application.
+### 2. 장면 추출
+원하는 프레임레이트(FPS)로 영상을 낱장의 장면으로 추출합니다.
 
-**Use Lovable**
+### 3. 크기 보정
+화면 속 자나 길이를 아는 물체를 기준으로 실제 길이(m)를 입력해 픽셀 좌표를
+실측 단위로 환산합니다.
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/3938c541-b5ec-4201-aa1d-d792350eb4d8) and start prompting.
+### 4. 물체 지정
+첫 장면에서 움직이는 물체를 네모(ROI)로 지정하면, 이후 모든 장면에서
+Lucas-Kanade 옵티컬 플로우로 자동 추적합니다. 추적이 흔들린 장면은 신뢰도
+색상으로 표시되며, 해당 장면에서 위치를 다시 지정해 그 지점부터 재추적할 수
+있습니다.
 
-Changes made via Lovable will be committed automatically to this repo.
+### 5. 결과
+위치·속도·가속도 그래프, 이동 경로 시각화, CSV 및 추적 경로가 표시된 영상
+다운로드를 제공합니다.
 
-**Use your preferred IDE**
+## 기술 스택
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+Vite / React / TypeScript / shadcn-ui / Tailwind CSS / jsfeat(Lucas-Kanade
+옵티컬 플로우 추적) / recharts(그래프)
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+## 로컬 개발
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
+git clone <이 저장소 URL>
+cd motion-tracker-pro
 npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+## 배포
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/3938c541-b5ec-4201-aa1d-d792350eb4d8) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+`main` 브랜치에 push하면 GitHub Actions(`.github/workflows/deploy.yml`)가
+자동으로 빌드하여 GitHub Pages에 배포합니다.
