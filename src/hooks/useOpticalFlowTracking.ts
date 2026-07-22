@@ -282,8 +282,8 @@ function trackPoints(
     prevPyr.allocate(width, height, jsfeat.U8_t | jsfeat.C1_t);
     currPyr.allocate(width, height, jsfeat.U8_t | jsfeat.C1_t);
 
-  prevPyr.build(prevGray, true);
-    currPyr.build(currGray, true);
+  prevPyr.build(prevGray, false);
+    currPyr.build(currGray, false);
 
   // 특징점 배열 준비
   const pointCount = prevPoints.length;
