@@ -203,24 +203,34 @@ function detectKeyPoints(
     jsfeat.imgproc.grayscale(data, width, height, gray);
 
   // 코너 검출을 위한 설정
-  const corners: jsfeat.keypoint_t[] = [];
-    const maxCorners = 150; // ROI 내 최대 특징점 수 증가
 
-  // ROI 영역에서만 코너 검출
-  const x = Math.max(0, Math.floor(roi.x));
-    const y = Math.max(0, Math.floor(roi.y));
-    const w = Math.min(width - x, Math.ceil(roi.w));
-    const h = Math.min(height - y, Math.ceil(roi.h));
+      const maxCorners = 150; // ROI 내 최대 특징점 수 증가
 
-  // YAPE06 코너 검출기 사용 (민감도 조정)
-  jsfeat.yape06.laplacian_threshold = 20; // 더 낮춰서 더 많은 특징점 감지
-  jsfeat.yape06.min_eigen_value_threshold = 15; // 더 낮춰서 더 많은 특징점 감지
+      // jsfeat.yape06.detect는 결과 배열에 이미 keypoint_t 인스턴스가 채워져 있어야 한다.
+      // (내부적으로 points[i].x = ... 처럼 기존 객체의 프로퍼티에 직접 대입하기 때문에,
+      // 빈 배열을 넘기면 "undefined is not an object" 런타임 오류가 발생한다.)
+      const corners: jsfeat.keypoint_t[] = [];
+      for (let i = 0; i < maxCorners; i++) {
+              corners[i] = new jsfeat.keypoint_t();
+      }
 
-  jsfeat.yape06.detect(gray, corners, maxCorners);
+      // ROI 영역에서만 코너 검출
+      const x = Math.max(0, Math.floor(roi.x));
+      const y = Math.max(0, Math.floor(roi.y));
+      const w = Math.min(width - x, Math.ceil(roi.w));
+      const h = Math.min(height - y, Math.ceil(roi.h));
+
+      // YAPE06 코너 검출기 사용 (민감도 조정)
+      jsfeat.yape06.laplacian_threshold = 20; // 더 낮춰서 더 많은 특징점 감지
+      jsfeat.yape06.min_eigen_value_threshold = 15; // 더 낮춰서 더 많은 특징점 감지
+
+      // 세 번째 인자는 최대 개수가 아니라 이미지 가장자리 여백(border)이다. 기본값 5를 사용한다.
+      const detectedCount = jsfeat.yape06.detect(gray, corners, 5);
+    
 
   // ROI 내부의 코너만 필터링
   const points: Point[] = [];
-    for (let i = 0; i < corners.length; i++) {
+      for (let i = 0; i < detectedCount; i++) {
           const corner = corners[i];
           if (corner.x >= x && corner.x < x + w &&
                       corner.y >= y && corner.y < y + h) {
