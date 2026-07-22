@@ -1058,7 +1058,7 @@ const Index = () => {
                               <Tooltip />
                               <Legend />
                               <Line type="monotone" dataKey="x" stroke="hsl(var(--primary))" name="X 위치" />
-                              <Line type="monotone" dataKey="y" stroke="hsl(var(--secondary))" name="Y 위치" />
+                              <Line type="monotone" dataKey="y" stroke="hsl(var(--chart-2))" name="Y 위치" />
                             </LineChart>
                           </ResponsiveContainer>
                         </div>
