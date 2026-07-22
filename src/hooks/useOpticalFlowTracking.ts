@@ -206,17 +206,29 @@ function detectKeyPoints(
 
 
 
+
       // jsfeat.yape06.detect는 ROI가 아니라 이미지 전체에서 코너를 찾으며, 개수를 제한하는
       // 파라미터가 없다(세 번째 인자는 최대 개수가 아니라 가장자리 여백이다). 내부적으로
       // points[i].x = ... 처럼 기존 keypoint_t 객체에 직접 대입하기 때문에, 실제 검출된
-      // 코너 수보다 배열이 작으면(예: 책상·의자 등 디테일이 많은 실제 영상에서 150개를
-      // 훌쩍 넘는 코너가 잡히는 경우) "undefined 프로퍼티 설정" 오류로 크래시한다.
-      // 실사 영상에서 나올 수 있는 코너 수보다 충분히 여유 있게 미리 할당해둔다.
-      const cornerBufferSize = 5000;
-      const corners: jsfeat.keypoint_t[] = [];
-      for (let i = 0; i < cornerBufferSize; i++) {
-              corners[i] = new jsfeat.keypoint_t();
-      }
+      // 코너 수보다 배열이 작으면 "undefined 프로퍼티 설정" 오류로 크래시한다. 실사 영상은
+      // 디테일이 많아 수천 개 이상의 코너가 잡힐 수 있어 고정된 크기로는 안전을 보장할 수
+      // 없으므로, 접근하는 인덱스에 맞춰 필요한 만큼 자동으로 늘어나는 배열을 사용한다.
+      const cornerCache = new Map<number, jsfeat.keypoint_t>();
+      const corners = new Proxy([] as jsfeat.keypoint_t[], {
+              get(target, prop) {
+                        if (typeof prop === 'string' && /^\d+$/.test(prop)) {
+                                    const idx = Number(prop);
+                                    let kp = cornerCache.get(idx);
+                                    if (!kp) {
+                                                  kp = new jsfeat.keypoint_t();
+                                                  cornerCache.set(idx, kp);
+                                    }
+                                    return kp;
+                        }
+                        return (target as any)[prop];
+              }
+      });
+    
     
       // ROI 영역에서만 코너 검출
       const x = Math.max(0, Math.floor(roi.x));
