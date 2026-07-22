@@ -178,10 +178,14 @@ export const useOpticalFlowTracking = () => {
             }
 
             return trackedROIs;
+                                                    } catch (err) {
+                                                              console.error('트래킹 내부 오류 상세:', err, err instanceof Error ? err.stack : '');
+                                                              throw err;
                                                     } finally {
-                                                            setIsTracking(false);
-                                                            setProgress(0);
+                                                              setIsTracking(false);
+                                                              setProgress(0);
                                                     }
+        
     }, []);
 
     return {
