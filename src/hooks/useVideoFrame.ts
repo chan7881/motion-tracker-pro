@@ -105,11 +105,30 @@ export const useVideoFrame = () => {
           setProgress(0);
     }, []);
 
+    // 추출된 프레임 중 [startIndex, endIndex] 구간(양끝 포함)만 남기고 0부터 다시 인덱싱한다.
+    // ROI 지정/추적/분석은 모두 이 단계 "이후"에 시작되므로(frameROIs가 비어 있는 시점),
+    // 재인덱싱해도 하류에서 프레임 인덱스가 꼬이지 않는다. timestamp도 fps 기준으로 다시 계산해
+    // 잘라낸 구간의 시작을 0초로 맞춘다.
+    const cropFrames = useCallback((startIndex: number, endIndex: number, cropFps: number) => {
+          setExtractedFrames((prev) => {
+                    const start = Math.max(0, Math.min(startIndex, prev.length - 1));
+                    const end = Math.max(start, Math.min(endIndex, prev.length - 1));
+                    const interval = 1 / cropFps;
+
+                    return prev.slice(start, end + 1).map((frame, i) => ({
+                              canvas: frame.canvas,
+                              timestamp: i * interval,
+                              index: i
+                    }));
+          });
+    }, []);
+
     return {
           extractedFrames,
           isExtracting,
           progress,
           extractFrames,
+          cropFrames,
           reset,
           videoRef
     };

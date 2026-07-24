@@ -6,6 +6,7 @@ import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { VideoCanvas, VideoCanvasHandle, confidenceColor, TrailPoint } from '@/components/VideoCanvas';
+import { FrameTrimmer } from '@/components/FrameTrimmer';
 import { HelpGuide, HelpButton, useAutoShowHelp } from '@/components/HelpGuide';
 import { useVideoFrame } from '@/hooks/useVideoFrame';
 import { useROISelection, ROI } from '@/hooks/useROISelection';
@@ -50,7 +51,7 @@ const Index = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<BlobPart[]>([]);
 
-  const { extractedFrames, isExtracting, progress, extractFrames, reset } = useVideoFrame();
+  const { extractedFrames, isExtracting, progress, extractFrames, cropFrames, reset } = useVideoFrame();
   const { isTracking, progress: trackingProgress, trackObjectAcrossFrames } = useOpticalFlowTracking();
   const { open: helpOpen, setOpen: setHelpOpen } = useAutoShowHelp();
 
@@ -156,11 +157,10 @@ const Index = () => {
       await extractFrames(videoElement, fps);
       toast({
         title: '프레임 추출 완료',
-        description: `${Math.floor(videoElement.duration * fps)}개의 장면을 추출했습니다`
+        description: `${Math.floor(videoElement.duration * fps)}개의 장면을 추출했습니다. 필요하면 구간을 잘라주세요.`
       });
 
-      // Auto-advance to scale calibration tab
-      setCurrentTab('calibrate');
+      // 크기 보정으로 자동 이동하지 않고 이 탭에 남아 구간 자르기(트림) UI를 보여준다
     } catch (error) {
       toast({
         title: '추출 실패',
@@ -169,6 +169,20 @@ const Index = () => {
       });
     }
   }, [extractFrames, fps, toast]);
+
+  const handleApplyCrop = useCallback((startIndex: number, endIndex: number) => {
+    cropFrames(startIndex, endIndex, fps);
+    setCurrentFrameIndex(0);
+    toast({
+      title: '구간 적용 완료',
+      description: `${endIndex - startIndex + 1}개 장면만 남기고 잘랐습니다`
+    });
+    setCurrentTab('calibrate');
+  }, [cropFrames, fps, toast]);
+
+  const handleSkipCrop = useCallback(() => {
+    setCurrentTab('calibrate');
+  }, []);
 
   const stopCameraStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -843,6 +857,15 @@ const Index = () => {
                         <ChevronRight className="w-4 h-4" />
                       </Button>
                     </div>
+
+                    <FrameTrimmer
+                      frames={extractedFrames}
+                      fps={fps}
+                      currentFrameIndex={currentFrameIndex}
+                      onSeek={jumpToFrame}
+                      onApply={handleApplyCrop}
+                      onSkip={handleSkipCrop}
+                    />
                   </div>
                 )}
               </TabsContent>
