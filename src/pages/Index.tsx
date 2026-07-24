@@ -111,7 +111,12 @@ const Index = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith('video/')) {
+    // 브라우저/OS가 MIME 타입을 못 알아내는 경우가 있다 (예: 일부 환경에서 .mov가
+    // video/quicktime이 아니라 application/octet-stream으로 보고됨). 이런 경우를 위해
+    // 확장자도 함께 확인한다.
+    const isVideoMime = file.type.startsWith('video/');
+    const isVideoExtension = /\.(mp4|mov|webm|avi|mkv|m4v|3gp|ogv)$/i.test(file.name);
+    if (!isVideoMime && !isVideoExtension) {
       toast({
         title: '잘못된 파일 형식',
         description: '동영상 파일을 올려주세요',
