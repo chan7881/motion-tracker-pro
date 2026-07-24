@@ -25,14 +25,6 @@ export const useVideoFrame = () => {
           const frames: ExtractedFrame[] = [];
 
                                           try {
-                                                  const duration = videoElement.duration;
-                                                  if (!duration || !isFinite(duration)) {
-                                                            throw new Error('Invalid video duration');
-                                                  }
-
-            const interval = 1 / fps;
-                                                  const totalFrames = Math.floor(duration * fps);
-
             const canvas = document.createElement('canvas');
                                                   const ctx = canvas.getContext('2d');
                                                   if (!ctx) throw new Error('Could not get canvas context');
@@ -43,6 +35,30 @@ export const useVideoFrame = () => {
                                   videoElement.addEventListener('loadedmetadata', resolve, { once: true });
                       });
             }
+
+            let duration = videoElement.duration;
+            // 일부 .mov 파일(특히 아이폰 촬영본)은 메타데이터가 로드돼도 duration이
+            // Infinity로 보고된다. 끝으로 한 번 탐색(seek)하면 브라우저가 실제 길이를
+            // 다시 계산해 값을 채워준다.
+            if (!isFinite(duration)) {
+                      await new Promise<void>((resolve) => {
+                                  const onSeeked = () => {
+                                              videoElement.removeEventListener('seeked', onSeeked);
+                                              resolve();
+                                  };
+                                  videoElement.addEventListener('seeked', onSeeked);
+                                  videoElement.currentTime = 1e10;
+                      });
+                      duration = videoElement.duration;
+                      videoElement.currentTime = 0;
+            }
+
+                                                  if (!duration || !isFinite(duration)) {
+                                                            throw new Error('Invalid video duration');
+                                                  }
+
+            const interval = 1 / fps;
+                                                  const totalFrames = Math.floor(duration * fps);
 
             const nativeWidth = videoElement.videoWidth || 640;
                                                   const nativeHeight = videoElement.videoHeight || 480;
