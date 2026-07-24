@@ -21,8 +21,6 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 
 type FrameROI = ROI & { confidence?: number };
 
-const DEFAULT_PIXELS_PER_METER = 100;
-
 const Index = () => {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState('upload');
@@ -423,8 +421,7 @@ const Index = () => {
 
     setFrameROIs(merged);
 
-    const effectivePixelsPerMeter = pixelsPerMeter ?? DEFAULT_PIXELS_PER_METER;
-    const motion = analyzeMotion(merged, fps, effectivePixelsPerMeter);
+    const motion = analyzeMotion(merged, fps, pixelsPerMeter);
 
     if (motion.length === 0) {
       throw new Error('운동 데이터를 생성할 수 없습니다');
@@ -512,7 +509,12 @@ const Index = () => {
     if (motionData.length === 0) return;
 
     // Create CSV content
-    const headers = ['Time (s)', 'X (m)', 'Y (m)', 'Vx (m/s)', 'Vy (m/s)', 'Speed (m/s)', 'Ax (m/s²)', 'Ay (m/s²)', 'Acceleration (m/s²)'];
+    const headers = [
+      'Time (s)',
+      `X (${units.pos})`, `Y (${units.pos})`,
+      `Vx (${units.vel})`, `Vy (${units.vel})`, `Speed (${units.vel})`,
+      `Ax (${units.acc})`, `Ay (${units.acc})`, `Acceleration (${units.acc})`
+    ];
     const rows = motionData.map((d) => [
       d.time.toFixed(4),
       d.x.toFixed(4),
@@ -545,7 +547,7 @@ const Index = () => {
       title: 'CSV 다운로드',
       description: '분석 결과가 CSV 파일로 다운로드되었습니다'
     });
-  }, [motionData, toast]);
+  }, [motionData, toast, units]);
 
   const currentFrame = extractedFrames[currentFrameIndex] || null;
   const showVideo = currentTab === 'upload' || (currentTab === 'extract' && extractedFrames.length === 0);
@@ -570,6 +572,14 @@ const Index = () => {
       .filter(([idx]) => idx <= upto)
       .map(([, r]) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2, confidence: r.confidence ?? 1 }));
   }, [frameROIs, currentTab, currentFrameIndex]);
+
+  // 크기 보정을 했으면 m 계열, 안 했으면 원본 픽셀 단위로 표시
+  const units = useMemo(() => ({
+    calibrated: pixelsPerMeter !== null,
+    pos: pixelsPerMeter !== null ? 'm' : 'px',
+    vel: pixelsPerMeter !== null ? 'm/s' : 'px/s',
+    acc: pixelsPerMeter !== null ? 'm/s²' : 'px/s²'
+  }), [pixelsPerMeter]);
 
   const lowConfidenceFrames = useMemo(() => {
     return Array.from(frameROIs.entries())
@@ -920,7 +930,7 @@ const Index = () => {
                       variant="ghost"
                       className="w-full text-muted-foreground"
                     >
-                      건너뛰기 (기본값 사용)
+                      건너뛰기 (픽셀 단위로 분석)
                     </Button>
                   </>
                 ) : (
@@ -1041,8 +1051,8 @@ const Index = () => {
                 {motionData.length > 0 ? (
                   <>
                     {pixelsPerMeter === null && (
-                      <div className="text-xs bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 rounded p-2">
-                        크기 보정을 하지 않아 위치·속도 값이 정확하지 않을 수 있어요. (100px = 1m로 가정)
+                      <div className="text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded p-2">
+                        크기 보정을 하지 않아 위치·속도 값이 픽셀(px) 단위로 표시돼요. 실제 단위(m)로 보려면 3단계에서 크기 보정을 해주세요.
                       </div>
                     )}
 
@@ -1059,7 +1069,7 @@ const Index = () => {
                             <LineChart data={chartData}>
                               <CartesianGrid strokeDasharray="3 3" />
                               <XAxis dataKey="time" label={{ value: '시간 (s)', position: 'insideBottom', offset: -5 }} />
-                              <YAxis label={{ value: '위치 (m)', angle: -90, position: 'insideLeft' }} />
+                              <YAxis label={{ value: `위치 (${units.pos})`, angle: -90, position: 'insideLeft' }} />
                               <Tooltip />
                               <Legend />
                               <Line type="monotone" dataKey="x" stroke="hsl(var(--primary))" name="X 위치" />
@@ -1075,7 +1085,7 @@ const Index = () => {
                             <LineChart data={chartData}>
                               <CartesianGrid strokeDasharray="3 3" />
                               <XAxis dataKey="time" label={{ value: '시간 (s)', position: 'insideBottom', offset: -5 }} />
-                              <YAxis label={{ value: '속도 (m/s)', angle: -90, position: 'insideLeft' }} />
+                              <YAxis label={{ value: `속도 (${units.vel})`, angle: -90, position: 'insideLeft' }} />
                               <Tooltip />
                               <Legend />
                               <Line type="monotone" dataKey="speed" stroke="hsl(var(--primary))" name="속력" />
@@ -1090,7 +1100,7 @@ const Index = () => {
                             <LineChart data={chartData}>
                               <CartesianGrid strokeDasharray="3 3" />
                               <XAxis dataKey="time" label={{ value: '시간 (s)', position: 'insideBottom', offset: -5 }} />
-                              <YAxis label={{ value: '가속도 (m/s²)', angle: -90, position: 'insideLeft' }} />
+                              <YAxis label={{ value: `가속도 (${units.acc})`, angle: -90, position: 'insideLeft' }} />
                               <Tooltip />
                               <Legend />
                               <Line type="monotone" dataKey="acceleration" stroke="hsl(var(--primary))" name="가속도" />
@@ -1113,11 +1123,11 @@ const Index = () => {
                         </div>
                         <div className="p-2 bg-secondary rounded">
                           <p className="text-muted-foreground">최대 속력</p>
-                          <p className="font-semibold">{Math.max(...motionData.map((d) => d.speed)).toFixed(2)} m/s</p>
+                          <p className="font-semibold">{Math.max(...motionData.map((d) => d.speed)).toFixed(2)} {units.vel}</p>
                         </div>
                         <div className="p-2 bg-secondary rounded">
                           <p className="text-muted-foreground">최대 가속도</p>
-                          <p className="font-semibold">{Math.max(...motionData.map((d) => d.acceleration)).toFixed(2)} m/s²</p>
+                          <p className="font-semibold">{Math.max(...motionData.map((d) => d.acceleration)).toFixed(2)} {units.acc}</p>
                         </div>
                       </div>
                     </div>

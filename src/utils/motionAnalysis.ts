@@ -16,6 +16,7 @@ export interface ROIData {
   y: number;
   w: number;
   h: number;
+  confidence?: number;
 }
 
 // 기준선의 픽셀 길이와 사용자가 입력한 실제 길이(m)로부터 pixelsPerMeter 값을 계산
@@ -29,13 +30,22 @@ export function computePixelsPerMeter(pixelDistance: number, realWorldMeters: nu
 export function analyzeMotion(
   frameROIs: Map<number, ROIData>,
   fps: number,
-  pixelsPerMeter: number = 100 // Default: 100 pixels = 1 meter
+  pixelsPerMeter: number | null = null // null: 크기 보정 없음 -> 결과를 픽셀 단위로 유지
 ): MotionData[] {
   const motionData: MotionData[] = [];
-  const sortedFrames = Array.from(frameROIs.keys()).sort((a, b) => a - b);
+  // 추적이 완전히 실패한(confidence === 0) 프레임은 제외한다. 이런 프레임은 물체가 실제로
+  // 이동했는데도 "마지막으로 성공한 위치"에 고정된 값이라, 그대로 쓰면 속도/가속도 그래프에
+  // 가짜 정지 구간과 튀는 값이 생긴다. 인접한 유효 프레임 사이의 시간 간격(dt_total)으로
+  // 계산하므로 중간 프레임을 건너뛰어도 물리량 자체는 정확하다.
+  const sortedFrames = Array.from(frameROIs.entries())
+    .filter(([, roi]) => roi.confidence !== 0)
+    .map(([frameIndex]) => frameIndex)
+    .sort((a, b) => a - b);
 
   if (sortedFrames.length < 2) return motionData;
 
+  // 보정 값이 없으면 나눗셈 없이 픽셀 원본값을 그대로 사용한다 (단위: px, px/s, px/s²)
+  const unitsPerPixel = pixelsPerMeter && pixelsPerMeter > 0 ? pixelsPerMeter : 1;
   const dt = 1 / fps; // Time between frames
 
   for (let i = 0; i < sortedFrames.length; i++) {
@@ -50,8 +60,8 @@ export function analyzeMotion(
     }
 
     // Center of ROI
-    const x = (roi.x + roi.w / 2) / pixelsPerMeter;
-    const y = (roi.y + roi.h / 2) / pixelsPerMeter;
+    const x = (roi.x + roi.w / 2) / unitsPerPixel;
+    const y = (roi.y + roi.h / 2) / unitsPerPixel;
     const time = frameIndex * dt;
 
     let vx = 0, vy = 0, speed = 0;
@@ -69,10 +79,10 @@ export function analyzeMotion(
         continue;
       }
 
-      const x_prev = (prevROI.x + prevROI.w / 2) / pixelsPerMeter;
-      const y_prev = (prevROI.y + prevROI.h / 2) / pixelsPerMeter;
-      const x_next = (nextROI.x + nextROI.w / 2) / pixelsPerMeter;
-      const y_next = (nextROI.y + nextROI.h / 2) / pixelsPerMeter;
+      const x_prev = (prevROI.x + prevROI.w / 2) / unitsPerPixel;
+      const y_prev = (prevROI.y + prevROI.h / 2) / unitsPerPixel;
+      const x_next = (nextROI.x + nextROI.w / 2) / unitsPerPixel;
+      const y_next = (nextROI.y + nextROI.h / 2) / unitsPerPixel;
 
       const dt_total = (nextFrame - prevFrame) * dt;
       vx = (x_next - x_prev) / dt_total;
@@ -83,8 +93,8 @@ export function analyzeMotion(
       const prevROI = frameROIs.get(prevFrame);
 
       if (prevROI) {
-        const x_prev = (prevROI.x + prevROI.w / 2) / pixelsPerMeter;
-        const y_prev = (prevROI.y + prevROI.h / 2) / pixelsPerMeter;
+        const x_prev = (prevROI.x + prevROI.w / 2) / unitsPerPixel;
+        const y_prev = (prevROI.y + prevROI.h / 2) / unitsPerPixel;
 
         vx = (x - x_prev) / dt;
         vy = (y - y_prev) / dt;
@@ -95,8 +105,8 @@ export function analyzeMotion(
       const nextROI = frameROIs.get(nextFrame);
 
       if (nextROI) {
-        const x_next = (nextROI.x + nextROI.w / 2) / pixelsPerMeter;
-        const y_next = (nextROI.y + nextROI.h / 2) / pixelsPerMeter;
+        const x_next = (nextROI.x + nextROI.w / 2) / unitsPerPixel;
+        const y_next = (nextROI.y + nextROI.h / 2) / unitsPerPixel;
 
         vx = (x_next - x) / dt;
         vy = (y_next - y) / dt;
