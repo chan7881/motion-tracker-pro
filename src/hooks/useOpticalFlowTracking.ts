@@ -326,7 +326,43 @@ function exhaustiveSearch(
     }
   }
 
-  return { x: bestX, y: bestY, score: bestScore };
+  // ZNCC는 정수 픽셀 격자에서만 점수를 계산하므로 위치가 항상 1px 단위로 양자화되고,
+  // 이 잡음이 그대로 속도/가속도 계산에 들어가 값이 미세하게 튄다. 최고점 주변 이웃
+  // 점수로 포물선(2차) 피팅해 소수점 이하 위치를 추정하면 이 양자화 잡음이 줄어든다.
+  const refined = refineSubpixel(frame, template, templateW, templateH, bestX, bestY, bestScore);
+
+  return { x: refined.x, y: refined.y, score: bestScore };
+}
+
+// 최고점(bestX, bestY)과 그 좌우/상하 이웃의 ZNCC 점수 3개로 각 축을 독립적으로
+// 포물선 피팅해(parabolic interpolation) 정수 위치를 소수점 단위로 보정한다.
+function refineSubpixel(
+  frame: GrayImage,
+  template: Float32Array,
+  templateW: number,
+  templateH: number,
+  bestX: number,
+  bestY: number,
+  centerScore: number
+): Point {
+  const left = zncc(template, extractPatch(frame, bestX - 1, bestY, templateW, templateH));
+  const right = zncc(template, extractPatch(frame, bestX + 1, bestY, templateW, templateH));
+  const up = zncc(template, extractPatch(frame, bestX, bestY - 1, templateW, templateH));
+  const down = zncc(template, extractPatch(frame, bestX, bestY + 1, templateW, templateH));
+
+  return {
+    x: bestX + parabolicOffset(left, centerScore, right),
+    y: bestY + parabolicOffset(up, centerScore, down)
+  };
+}
+
+// 세 점(이전, 중앙, 다음)에 포물선을 맞췄을 때 꼭짓점이 중앙에서 얼마나 떨어져 있는지 계산.
+// 진짜 뾰족한 봉우리(peak)라면 결과는 항상 -0.5~0.5 범위 안에 들어온다.
+function parabolicOffset(prev: number, center: number, next: number): number {
+  const denom = prev - 2 * center + next;
+  if (Math.abs(denom) < 1e-6) return 0;
+  const offset = (0.5 * (prev - next)) / denom;
+  return Math.max(-0.5, Math.min(0.5, offset));
 }
 
 // 이미 메모리에 있는(다운샘플된) 배열 안에서 전수 탐색한다 (좌표는 배열 내부 인덱스)
