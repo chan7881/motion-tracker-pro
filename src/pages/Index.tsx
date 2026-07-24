@@ -519,6 +519,14 @@ const Index = () => {
     });
   }, [videoWithROI, toast]);
 
+  // 크기 보정을 했으면 m 계열, 안 했으면 원본 픽셀 단위로 표시
+  const units = useMemo(() => ({
+    calibrated: pixelsPerMeter !== null,
+    pos: pixelsPerMeter !== null ? 'm' : 'px',
+    vel: pixelsPerMeter !== null ? 'm/s' : 'px/s',
+    acc: pixelsPerMeter !== null ? 'm/s²' : 'px/s²'
+  }), [pixelsPerMeter]);
+
   const downloadCSV = useCallback(() => {
     if (motionData.length === 0) return;
 
@@ -586,14 +594,6 @@ const Index = () => {
       .filter(([idx]) => idx <= upto)
       .map(([, r]) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2, confidence: r.confidence ?? 1 }));
   }, [frameROIs, currentTab, currentFrameIndex]);
-
-  // 크기 보정을 했으면 m 계열, 안 했으면 원본 픽셀 단위로 표시
-  const units = useMemo(() => ({
-    calibrated: pixelsPerMeter !== null,
-    pos: pixelsPerMeter !== null ? 'm' : 'px',
-    vel: pixelsPerMeter !== null ? 'm/s' : 'px/s',
-    acc: pixelsPerMeter !== null ? 'm/s²' : 'px/s²'
-  }), [pixelsPerMeter]);
 
   const lowConfidenceFrames = useMemo(() => {
     return Array.from(frameROIs.entries())
