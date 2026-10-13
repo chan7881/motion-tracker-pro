@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { clientToCanvas } from '@/utils/canvasCoords';
 
 export interface ROI {
   x: number;
@@ -15,11 +16,8 @@ export const useROISelection = (canvasRef: React.RefObject<HTMLCanvasElement>) =
   const getCanvasCoordinates = useCallback((e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     if (!canvasRef.current) return null;
 
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    
     let clientX: number, clientY: number;
-    
+
     if ('touches' in e) {
       if (e.touches.length === 0) return null;
       clientX = e.touches[0].clientX;
@@ -29,13 +27,7 @@ export const useROISelection = (canvasRef: React.RefObject<HTMLCanvasElement>) =
       clientY = e.clientY;
     }
 
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-
-    return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY
-    };
+    return clientToCanvas(canvasRef.current, clientX, clientY);
   }, [canvasRef]);
 
   const handlePointerDown = useCallback((e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {

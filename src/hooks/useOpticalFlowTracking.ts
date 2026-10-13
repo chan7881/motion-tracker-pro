@@ -42,6 +42,8 @@ const TEMPLATE_REFRESH_BLEND = 0.15;
 const MIN_TEMPLATE_VARIANCE = 4;
 // 다운샘플 후 목표로 하는 템플릿 한 변의 픽셀 수 (탐색 1단계 속도용)
 const COARSE_TARGET_SIZE = 24;
+// 이 프레임 수마다 한 번씩 브라우저에 차례를 넘겨 진행률을 그리게 한다
+const YIELD_EVERY_FRAMES = 2;
 
 export const useOpticalFlowTracking = () => {
   const [isTracking, setIsTracking] = useState(false);
@@ -53,7 +55,9 @@ export const useOpticalFlowTracking = () => {
     frames: HTMLCanvasElement[],
     initialROI: { x: number; y: number; w: number; h: number },
     startFrameIndex: number,
-    onProgress: (current: number, total: number) => void
+    onProgress: (current: number, total: number) => void,
+    // true면 시작 프레임 "이후"만 추적한다 (이 장면부터 다시 추적: 앞쪽 결과는 그대로 둔다)
+    forwardOnly: boolean = false
   ): Promise<Map<number, TrackedROI>> => {
     setIsTracking(true);
     setProgress(0);
@@ -98,34 +102,36 @@ export const useOpticalFlowTracking = () => {
         confidence: 1.0
       });
 
+      const forwardIndices = rangeAsc(startFrameIndex + 1, frames.length);
+      const backwardIndices = forwardOnly ? [] : rangeDesc(startFrameIndex - 1, -1);
+      const totalSteps = Math.max(1, forwardIndices.length + backwardIndices.length);
+      const reportStep = (done: number) => {
+        onProgress(done, totalSteps);
+        setProgress(Math.round((done / totalSteps) * 100));
+      };
+
       // 정방향 추적 (시작 프레임 -> 마지막 프레임)
-      trackSequence({
+      await trackSequence({
         frames,
-        indices: rangeAsc(startFrameIndex + 1, frames.length),
+        indices: forwardIndices,
         template: initialTemplate,
         roiW,
         roiH,
         startCenter,
         trackedROIs,
-        onStep: (done) => {
-          onProgress(done, frames.length);
-          setProgress(Math.round((done / frames.length) * 50));
-        }
+        onStep: (done) => reportStep(done)
       });
 
       // 역방향 추적 (시작 프레임 -> 첫 프레임)
-      trackSequence({
+      await trackSequence({
         frames,
-        indices: rangeDesc(startFrameIndex - 1, -1),
+        indices: backwardIndices,
         template: initialTemplate,
         roiW,
         roiH,
         startCenter,
         trackedROIs,
-        onStep: (done) => {
-          onProgress(done, frames.length);
-          setProgress(50 + Math.round((done / frames.length) * 50));
-        }
+        onStep: (done) => reportStep(forwardIndices.length + done)
       });
 
       return trackedROIs;
@@ -174,7 +180,7 @@ function predictCenter(prev: Point | null, last: Point): Point {
 // 그 템플릿과 가장 비슷한 위치를 정규화 상호상관(ZNCC)으로 직접 찾는다. 프레임마다
 // 항상 같은 기준 템플릿과 비교하므로 오차가 누적되지 않고, 코너 유무와 무관하게
 // 동작한다.
-function trackSequence(params: {
+async function trackSequence(params: {
   frames: HTMLCanvasElement[];
   indices: number[];
   template: Float32Array;
@@ -183,7 +189,7 @@ function trackSequence(params: {
   startCenter: Point;
   trackedROIs: Map<number, TrackedROI>;
   onStep: (stepNumber: number) => void;
-}): void {
+}): Promise<void> {
   const { frames, indices, roiW, roiH, trackedROIs, onStep } = params;
 
   let template = params.template;
@@ -199,7 +205,12 @@ function trackSequence(params: {
     const predicted = predictCenter(prevCenter, lastCenter);
     const baseRadius = Math.max(roiW, roiH) / 2 + SEARCH_MARGIN;
     const maxRadius = Math.max(roiW, roiH) * MAX_SEARCH_RADIUS_MULTIPLIER;
-    const radius = Math.min(maxRadius, baseRadius * Math.pow(SEARCH_GROWTH_PER_FAILURE, failStreak));
+    // 첫 걸음은 아직 속도를 몰라 예측 위치가 "제자리"다. 장면 간격이 넓으면(낮은 FPS, 빠른 물체)
+    // 물체가 기본 반경 밖으로 나가 있어 근처의 엉뚱한 무늬를 잡고 그대로 끌려간다
+    // (실제 영상 10 fps: 구슬이 장면마다 약 63 px 이동, 기본 반경 38 px). 그래서 첫 걸음은 넓게 찾는다.
+    const radius = prevCenter === null
+      ? maxRadius
+      : Math.min(maxRadius, baseRadius * Math.pow(SEARCH_GROWTH_PER_FAILURE, failStreak));
 
     const match = matchTemplate(gray, template, roiW, roiH, predicted.x, predicted.y, radius);
 
@@ -244,6 +255,13 @@ function trackSequence(params: {
     }
 
     onStep(step + 1);
+
+    // 추적은 무거운 동기 계산이라 그대로 돌리면 끝날 때까지 화면이 얼고 진행률도
+    // 갱신되지 않는다(모바일은 "페이지 응답 없음"까지 뜬다). 몇 프레임마다 브라우저에
+    // 차례를 넘겨 화면을 다시 그리게 한다.
+    if (step % YIELD_EVERY_FRAMES === YIELD_EVERY_FRAMES - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   }
 }
 

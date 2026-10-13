@@ -27,6 +27,12 @@ export const FrameTrimmer = ({ frames, fps, currentFrameIndex, onSeek, onApply, 
   const endPreviewRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // 다시 추출하거나 구간을 자르면 프레임 수가 바뀐다. 예전 범위가 남으면 슬라이더가
+  // 없는 장면 번호를 가리키므로 전체 구간으로 되돌린다.
+  useEffect(() => {
+    setRange([0, lastIndex]);
+  }, [frames, lastIndex]);
+
   const [start, end] = range;
   const selectedCount = end - start + 1;
   const selectedSeconds = selectedCount / fps;

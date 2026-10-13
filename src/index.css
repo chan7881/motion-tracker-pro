@@ -105,5 +105,7 @@ All colors MUST be HSL.
 
   body {
           @apply bg-background text-foreground;
+          /* 한국어를 낱말 중간(「모바/일」)이 아니라 띄어쓰기에서 줄바꿈 */
+          word-break: keep-all;
   }
 }

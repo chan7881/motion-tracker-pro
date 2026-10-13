@@ -13,7 +13,7 @@ import { useROISelection, ROI } from '@/hooks/useROISelection';
 import { useScaleCalibration } from '@/hooks/useScaleCalibration';
 import { useOpticalFlowTracking } from '@/hooks/useOpticalFlowTracking';
 import { useToast } from '@/hooks/use-toast';
-import { analyzeMotion, smoothMotionData, computePixelsPerMeter, MotionData } from '@/utils/motionAnalysis';
+import { analyzeMotion, computePixelsPerMeter, MotionData } from '@/utils/motionAnalysis';
 import {
   Upload, Camera, Play, ChevronLeft, ChevronRight, Target, BarChart3,
   CheckCircle, Download, Video, Ruler, Square
@@ -21,6 +21,26 @@ import {
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 type FrameROI = ROI & { confidence?: number };
+
+// 폰(390px)에서도 다섯 단계 이름이 겹치지 않게: 좁은 화면은 아이콘을 숨기고 두 줄까지 허용
+const STEP_TAB_CLASS = 'data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground min-h-11 h-auto px-1 sm:px-4 text-xs sm:text-sm leading-tight whitespace-normal break-keep sm:whitespace-nowrap';
+const STEP_ICON_CLASS = 'hidden sm:block w-4 h-4 mr-2 shrink-0';
+
+// 그래프 축 이름이 폰에서 잘리거나 눈금 숫자와 겹치지 않도록 여백과 정렬을 한곳에서 정한다
+const CHART_MARGIN = { top: 10, right: 10, bottom: 20, left: 16 };
+const X_AXIS_LABEL = { value: '시간 (s)', position: 'insideBottom' as const, offset: -12 };
+const yAxisLabel = (value: string) => ({
+  value,
+  angle: -90,
+  position: 'insideLeft' as const,
+  style: { textAnchor: 'middle' as const }
+});
+// 툴팁: 흰 바탕에서 잘 읽히는 글자색, 시간과 값에 단위를 붙인다
+const tooltipProps = (unit: string) => ({
+  labelFormatter: (t: number) => `${t} s`,
+  formatter: (v: number, name: string) => [`${v} ${unit}`, name] as [string, string],
+  labelStyle: { color: '#111827', fontWeight: 600 }
+});
 
 const Index = () => {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -50,8 +70,15 @@ const Index = () => {
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<BlobPart[]>([]);
+  const videoWithROIRef = useRef<string | null>(null);
+  const videoExtRef = useRef<'webm' | 'mp4'>('webm');
+  // 경로 영상 생성 작업 번호. 새 추적·초기화가 일어나면 번호가 바뀌어, 늦게 끝난 옛 작업이
+  // 새 결과를 덮어쓰지 못하게 한다.
+  const videoJobRef = useRef(0);
 
-  const { extractedFrames, isExtracting, progress, extractFrames, cropFrames, reset } = useVideoFrame();
+  const { extractedFrames, frameFps, isExtracting, progress, extractFrames, cropFrames, reset } = useVideoFrame();
+  // 시간 계산은 입력칸 값이 아니라 실제로 추출에 쓴 FPS로 한다 (추출 뒤 입력칸을 바꿔도 결과가 틀어지지 않게)
+  const analysisFps = frameFps ?? fps;
   const { isTracking, progress: trackingProgress, trackObjectAcrossFrames } = useOpticalFlowTracking();
   const { open: helpOpen, setOpen: setHelpOpen } = useAutoShowHelp();
 
@@ -94,17 +121,32 @@ const Index = () => {
     return () => clearInterval(id);
   }, [isRecording]);
 
-  const resetForNewVideo = useCallback(() => {
-    reset();
+  const replaceVideoWithROI = useCallback((url: string | null) => {
+    if (videoWithROIRef.current) URL.revokeObjectURL(videoWithROIRef.current);
+    videoWithROIRef.current = url;
+    setVideoWithROI(url);
+  }, []);
+
+  // 장면 번호가 바뀌는 일(새 영상, 다시 추출, 구간 자르기) 뒤에는 이전 ROI·추적·분석 결과가
+  // 다른 장면을 가리키게 되므로 모두 비운다.
+  const clearTrackingResults = useCallback(() => {
+    videoJobRef.current++;
+    setIsGeneratingVideo(false);
     setCurrentFrameIndex(0);
     setFrameROIs(new Map());
     setManualFrames(new Set());
-    setVideoWithROI(null);
+    setMotionData([]);
+    replaceVideoWithROI(null);
+    clearROI();
+  }, [clearROI, replaceVideoWithROI]);
+
+  const resetForNewVideo = useCallback(() => {
+    reset();
+    clearTrackingResults();
     setPixelsPerMeter(null);
     setRealLengthInput('');
     clearCalibrationLine();
-    clearROI();
-  }, [reset, clearCalibrationLine, clearROI]);
+  }, [reset, clearTrackingResults, clearCalibrationLine]);
 
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -154,11 +196,21 @@ const Index = () => {
     }
 
     try {
-      await extractFrames(videoElement, fps);
-      toast({
-        title: '프레임 추출 완료',
-        description: `${Math.floor(videoElement.duration * fps)}개의 장면을 추출했습니다. 필요하면 구간을 잘라주세요.`
-      });
+      clearTrackingResults();
+      const { count, duplicateCount } = await extractFrames(videoElement, fps);
+      if (count > 0 && duplicateCount / count > 0.2) {
+        toast({
+          title: '같은 장면이 여러 번 추출됐어요',
+          description: `${count}개 중 ${duplicateCount}개가 바로 앞 장면과 똑같아요. 프레임레이트(FPS)가 영상보다 높을 수 있어요. 휴대폰 영상은 보통 30이니 30 이하로 낮춰 다시 추출해 보세요.`,
+          variant: 'destructive',
+          duration: 12000 // 문장이 길어 기본 5초로는 다 읽기 어렵다
+        });
+      } else {
+        toast({
+          title: '프레임 추출 완료',
+          description: `${count}개의 장면을 추출했습니다. 필요하면 구간을 잘라주세요.`
+        });
+      }
 
       // 크기 보정으로 자동 이동하지 않고 이 탭에 남아 구간 자르기(트림) UI를 보여준다
     } catch (error) {
@@ -168,17 +220,17 @@ const Index = () => {
         variant: 'destructive'
       });
     }
-  }, [extractFrames, fps, toast]);
+  }, [extractFrames, fps, toast, clearTrackingResults]);
 
   const handleApplyCrop = useCallback((startIndex: number, endIndex: number) => {
-    cropFrames(startIndex, endIndex, fps);
-    setCurrentFrameIndex(0);
+    cropFrames(startIndex, endIndex);
+    clearTrackingResults();
     toast({
       title: '구간 적용 완료',
       description: `${endIndex - startIndex + 1}개 장면만 남기고 잘랐습니다`
     });
     setCurrentTab('calibrate');
-  }, [cropFrames, fps, toast]);
+  }, [cropFrames, clearTrackingResults, toast]);
 
   const handleSkipCrop = useCallback(() => {
     setCurrentTab('calibrate');
@@ -325,6 +377,7 @@ const Index = () => {
   const generateVideoWithROI = useCallback(async (rois: Map<number, FrameROI>) => {
     if (extractedFrames.length === 0) return;
 
+    const job = ++videoJobRef.current;
     setIsGeneratingVideo(true);
 
     try {
@@ -337,7 +390,7 @@ const Index = () => {
       if (!ctx) throw new Error('Failed to get canvas context');
 
       // Create video stream from canvas
-      const stream = canvas.captureStream(fps);
+      const stream = canvas.captureStream(analysisFps);
       const mimeCandidates = ['video/webm;codecs=vp9', 'video/webm'];
       const mimeType = mimeCandidates.find((t) => MediaRecorder.isTypeSupported(t)) || '';
       const mediaRecorder = mimeType
@@ -353,7 +406,12 @@ const Index = () => {
         mediaRecorder.onstop = () => {
           const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
           const url = URL.createObjectURL(blob);
-          setVideoWithROI(url);
+          if (job === videoJobRef.current) {
+            videoExtRef.current = blob.type.includes('mp4') ? 'mp4' : 'webm';
+            replaceVideoWithROI(url);
+          } else {
+            URL.revokeObjectURL(url);
+          }
           resolve();
         };
       });
@@ -363,6 +421,7 @@ const Index = () => {
       // Draw each frame with ROI + 이동 경로(trail)
       const trailSoFar: TrailPoint[] = [];
       for (let i = 0; i < extractedFrames.length; i++) {
+        if (job !== videoJobRef.current) break; // 새 추적이 시작됐으면 이 영상은 버린다
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(extractedFrames[i].canvas, 0, 0);
 
@@ -398,36 +457,46 @@ const Index = () => {
         }
 
         // Wait for frame duration
-        await new Promise((resolve) => setTimeout(resolve, 1000 / fps));
+        await new Promise((resolve) => setTimeout(resolve, 1000 / analysisFps));
       }
 
       mediaRecorder.stop();
       await stopped;
     } catch (error) {
-      toast({
-        title: '영상 생성 실패',
-        description: error instanceof Error ? error.message : '영상을 생성할 수 없습니다',
-        variant: 'destructive'
-      });
+      if (job === videoJobRef.current) {
+        toast({
+          title: '영상 생성 실패',
+          description: error instanceof Error ? error.message : '영상을 생성할 수 없습니다',
+          variant: 'destructive'
+        });
+      }
     } finally {
-      setIsGeneratingVideo(false);
+      if (job === videoJobRef.current) setIsGeneratingVideo(false);
     }
-  }, [extractedFrames, fps, toast]);
+  }, [extractedFrames, analysisFps, toast, replaceVideoWithROI]);
 
-  const runTracking = useCallback(async (startFrameIndex: number, initialROI: FrameROI) => {
+  // forwardOnly: "이 장면부터 다시 추적"일 때 — 시작 장면보다 앞의 결과는 그대로 두고 뒤쪽만 새로 추적한다
+  const runTracking = useCallback(async (startFrameIndex: number, initialROI: FrameROI, forwardOnly = false) => {
     if (!extractedFrames || extractedFrames.length === 0) {
       throw new Error('추출된 프레임이 없습니다');
     }
 
     const canvases = extractedFrames.map((f) => f.canvas);
-    const trackedROIs = await trackObjectAcrossFrames(canvases, initialROI, startFrameIndex, () => {});
+    const trackedROIs = await trackObjectAcrossFrames(canvases, initialROI, startFrameIndex, () => {}, forwardOnly);
 
     if (trackedROIs.size === 0) {
       throw new Error('추적된 위치가 없습니다. 다시 시도해주세요.');
     }
 
+    const merged = new Map<number, FrameROI>();
+    if (forwardOnly) {
+      frameROIs.forEach((r, idx) => {
+        if (idx < startFrameIndex) merged.set(idx, r);
+      });
+    }
+    trackedROIs.forEach((r, idx) => merged.set(idx, r));
+
     // 사용자가 직접 지정한 프레임은 자동 추적 결과보다 항상 우선한다
-    const merged = new Map<number, FrameROI>(trackedROIs);
     manualFrames.forEach((idx) => {
       const manualRoi = frameROIs.get(idx);
       if (manualRoi) merged.set(idx, manualRoi);
@@ -435,17 +504,19 @@ const Index = () => {
 
     setFrameROIs(merged);
 
-    const motion = analyzeMotion(merged, fps, pixelsPerMeter);
+    const frameHeight = extractedFrames[0].canvas.height;
+    const motion = analyzeMotion(merged, analysisFps, pixelsPerMeter, frameHeight);
 
     if (motion.length === 0) {
-      throw new Error('운동 데이터를 생성할 수 없습니다');
+      throw new Error('운동 데이터를 생성할 수 없습니다. 추적에 성공한 장면이 2개 이상 있어야 합니다.');
     }
 
-    setMotionData(smoothMotionData(motion, 3));
-    await generateVideoWithROI(merged);
+    setMotionData(motion);
+    // 경로 영상은 장면 수만큼 실제 시간이 걸리므로 기다리지 않고 결과부터 보여 준다
+    void generateVideoWithROI(merged);
 
     return merged;
-  }, [extractedFrames, trackObjectAcrossFrames, manualFrames, frameROIs, pixelsPerMeter, fps, generateVideoWithROI]);
+  }, [extractedFrames, trackObjectAcrossFrames, manualFrames, frameROIs, pixelsPerMeter, analysisFps, generateVideoWithROI]);
 
   const handleCompleteROISelection = useCallback(async () => {
     if (manualFrames.size === 0) {
@@ -489,7 +560,7 @@ const Index = () => {
     }
 
     try {
-      await runTracking(currentFrameIndex, currentROI);
+      await runTracking(currentFrameIndex, currentROI, true);
       toast({
         title: '다시 추적 완료',
         description: `${currentFrameIndex + 1}번째 장면부터 다시 추적했습니다`
@@ -508,7 +579,8 @@ const Index = () => {
 
     const a = document.createElement('a');
     a.href = videoWithROI;
-    a.download = `motion-tracking-${Date.now()}.webm`;
+    // 아이폰 사파리는 webm을 못 만들어 mp4로 녹화되므로 확장자를 실제 형식에 맞춘다
+    a.download = `motion-tracking-${Date.now()}.${videoExtRef.current}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -544,9 +616,10 @@ const Index = () => {
       d.vx.toFixed(4),
       d.vy.toFixed(4),
       d.speed.toFixed(4),
-      d.ax.toFixed(4),
-      d.ay.toFixed(4),
-      d.acceleration.toFixed(4)
+      // 처음·끝이라 가속도를 구할 수 없는 장면은 빈칸 (그래프와 같게)
+      d.accelValid ? d.ax.toFixed(4) : '',
+      d.accelValid ? d.ay.toFixed(4) : '',
+      d.accelValid ? d.acceleration.toFixed(4) : ''
     ]);
 
     const csvContent = [
@@ -574,8 +647,16 @@ const Index = () => {
   const currentFrame = extractedFrames[currentFrameIndex] || null;
   const showVideo = currentTab === 'upload' || (currentTab === 'extract' && extractedFrames.length === 0);
 
-  const displayedRoi: ROI | null = currentTab === 'roi' ? roi : (frameROIs.get(currentFrameIndex) ?? null);
-  const displayedConfidence = currentTab === 'roi' ? undefined : frameROIs.get(currentFrameIndex)?.confidence;
+  // 물체 지정 탭에서도, 지금 그리는 네모가 없으면 이 장면에 저장·추적된 네모를 보여 준다
+  // (흔들린 장면으로 이동했을 때 어디를 잡았는지 보여야 다시 지정할지 판단할 수 있다)
+  const storedRoi = frameROIs.get(currentFrameIndex) ?? null;
+  const displayedRoi: ROI | null = currentTab === 'roi' ? (roi ?? storedRoi) : storedRoi;
+  const displayedConfidence = currentTab === 'roi' && roi ? undefined : storedRoi?.confidence;
+
+  const trackedFrameCount = useMemo(
+    () => Array.from(frameROIs.values()).filter((r) => r.confidence !== 0).length,
+    [frameROIs]
+  );
 
   const calibrationLabel = useMemo(() => {
     if (currentTab !== 'calibrate' || !calibrationLine) return null;
@@ -610,10 +691,12 @@ const Index = () => {
     vx: Number(d.vx.toFixed(3)),
     vy: Number(d.vy.toFixed(3)),
     speed: Number(d.speed.toFixed(3)),
-    ax: Number(d.ax.toFixed(3)),
-    ay: Number(d.ay.toFixed(3)),
-    acceleration: Number(d.acceleration.toFixed(3))
+    // null이면 그 장면은 가속도 그래프에 점을 찍지 않는다
+    ax: d.accelValid ? Number(d.ax.toFixed(3)) : null,
+    ay: d.accelValid ? Number(d.ay.toFixed(3)) : null,
+    acceleration: d.accelValid ? Number(d.acceleration.toFixed(3)) : null
   }));
+  const validAccelerations = motionData.filter((d) => d.accelValid).map((d) => d.acceleration);
 
   return (
     <div className="min-h-screen bg-background">
@@ -633,25 +716,25 @@ const Index = () => {
         <HelpGuide open={helpOpen} onOpenChange={setHelpOpen} />
 
         <Tabs value={currentTab} onValueChange={setCurrentTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 bg-card">
-            <TabsTrigger value="upload" className="data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground">
-              <Upload className="w-4 h-4 mr-2" />
+          <TabsList className="grid w-full grid-cols-5 bg-card h-auto">
+            <TabsTrigger value="upload" className={STEP_TAB_CLASS}>
+              <Upload className={STEP_ICON_CLASS} />
               1. 촬영
             </TabsTrigger>
-            <TabsTrigger value="extract" className="data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground">
-              <Play className="w-4 h-4 mr-2" />
+            <TabsTrigger value="extract" className={STEP_TAB_CLASS}>
+              <Play className={STEP_ICON_CLASS} />
               2. 장면 추출
             </TabsTrigger>
-            <TabsTrigger value="calibrate" className="data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground">
-              <Ruler className="w-4 h-4 mr-2" />
+            <TabsTrigger value="calibrate" className={STEP_TAB_CLASS}>
+              <Ruler className={STEP_ICON_CLASS} />
               3. 크기 보정
             </TabsTrigger>
-            <TabsTrigger value="roi" className="data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground">
-              <Target className="w-4 h-4 mr-2" />
+            <TabsTrigger value="roi" className={STEP_TAB_CLASS}>
+              <Target className={STEP_ICON_CLASS} />
               4. 물체 지정
             </TabsTrigger>
-            <TabsTrigger value="analyze" className="data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground">
-              <BarChart3 className="w-4 h-4 mr-2" />
+            <TabsTrigger value="analyze" className={STEP_TAB_CLASS}>
+              <BarChart3 className={STEP_ICON_CLASS} />
               5. 결과
             </TabsTrigger>
           </TabsList>
@@ -860,7 +943,7 @@ const Index = () => {
 
                     <FrameTrimmer
                       frames={extractedFrames}
-                      fps={fps}
+                      fps={analysisFps}
                       currentFrameIndex={currentFrameIndex}
                       onSeek={jumpToFrame}
                       onApply={handleApplyCrop}
@@ -1017,7 +1100,8 @@ const Index = () => {
 
                     <div className="pt-4 border-t border-border space-y-3">
                       <p className="text-xs text-muted-foreground">
-                        지정된 위치: {manualFrames.size} / {extractedFrames.length}
+                        직접 지정한 장면: {manualFrames.size}개
+                        {trackedFrameCount > manualFrames.size && ` · 자동 추적한 장면: ${trackedFrameCount} / ${extractedFrames.length}개`}
                       </p>
 
                       <Button
@@ -1074,27 +1158,31 @@ const Index = () => {
                 {motionData.length > 0 ? (
                   <>
                     {pixelsPerMeter === null && (
-                      <div className="text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded p-2">
-                        크기 보정을 하지 않아 위치·속도 값이 픽셀(px) 단위로 표시돼요. 실제 단위(m)로 보려면 3단계에서 크기 보정을 해주세요.
+                      <div className="text-xs bg-blue-500/10 text-blue-200 rounded p-2">
+                        크기 보정을 하지 않아 위치·속력 값이 픽셀(px) 단위로 표시돼요. 실제 단위(m)로 보려면 3단계에서 크기 보정을 해주세요.
                       </div>
                     )}
 
-                    <Tabs value={activeChart} onValueChange={(v) => setActiveChart(v as any)} className="w-full">
+                    <p className="text-xs text-muted-foreground">
+                      위치는 영상의 왼쪽 아래 모서리를 0으로 하고, 오른쪽을 +X, 위쪽을 +Y로 재요. 속력과 가속도는 크기만 그려요(방향별 값은 CSV에 있어요). 가속도는 앞뒤 장면이 넉넉한 구간만 그려요.
+                    </p>
+
+                    <Tabs value={activeChart} onValueChange={(v) => setActiveChart(v as typeof activeChart)} className="w-full">
                       <TabsList className="grid w-full grid-cols-3">
                         <TabsTrigger value="position">위치</TabsTrigger>
-                        <TabsTrigger value="velocity">속도</TabsTrigger>
+                        <TabsTrigger value="velocity">속력</TabsTrigger>
                         <TabsTrigger value="acceleration">가속도</TabsTrigger>
                       </TabsList>
 
                       <TabsContent value="position" className="space-y-2">
-                        <div className="h-48">
+                        <div className="h-64">
                           <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData}>
+                            <LineChart data={chartData} margin={CHART_MARGIN}>
                               <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="time" label={{ value: '시간 (s)', position: 'insideBottom', offset: -5 }} />
-                              <YAxis label={{ value: `위치 (${units.pos})`, angle: -90, position: 'insideLeft' }} />
-                              <Tooltip />
-                              <Legend />
+                              <XAxis dataKey="time" label={X_AXIS_LABEL} />
+                              <YAxis label={yAxisLabel(`위치 (${units.pos})`)} />
+                              <Tooltip {...tooltipProps(units.pos)} />
+                              <Legend wrapperStyle={{ paddingTop: 16 }} />
                               <Line type="monotone" dataKey="x" stroke="hsl(var(--primary))" name="X 위치" />
                               <Line type="monotone" dataKey="y" stroke="hsl(var(--chart-2))" name="Y 위치" />
                             </LineChart>
@@ -1103,14 +1191,13 @@ const Index = () => {
                       </TabsContent>
 
                       <TabsContent value="velocity" className="space-y-2">
-                        <div className="h-48">
+                        <div className="h-64">
                           <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData}>
+                            <LineChart data={chartData} margin={CHART_MARGIN}>
                               <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="time" label={{ value: '시간 (s)', position: 'insideBottom', offset: -5 }} />
-                              <YAxis label={{ value: `속도 (${units.vel})`, angle: -90, position: 'insideLeft' }} />
-                              <Tooltip />
-                              <Legend />
+                              <XAxis dataKey="time" label={X_AXIS_LABEL} />
+                              <YAxis label={yAxisLabel(`속력 (${units.vel})`)} />
+                              <Tooltip {...tooltipProps(units.vel)} />
                               <Line type="monotone" dataKey="speed" stroke="hsl(var(--primary))" name="속력" />
                             </LineChart>
                           </ResponsiveContainer>
@@ -1118,15 +1205,14 @@ const Index = () => {
                       </TabsContent>
 
                       <TabsContent value="acceleration" className="space-y-2">
-                        <div className="h-48">
+                        <div className="h-64">
                           <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData}>
+                            <LineChart data={chartData} margin={CHART_MARGIN}>
                               <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="time" label={{ value: '시간 (s)', position: 'insideBottom', offset: -5 }} />
-                              <YAxis label={{ value: `가속도 (${units.acc})`, angle: -90, position: 'insideLeft' }} />
-                              <Tooltip />
-                              <Legend />
-                              <Line type="monotone" dataKey="acceleration" stroke="hsl(var(--primary))" name="가속도" />
+                              <XAxis dataKey="time" label={X_AXIS_LABEL} />
+                              <YAxis label={yAxisLabel(`가속도의 크기 (${units.acc})`)} />
+                              <Tooltip {...tooltipProps(units.acc)} />
+                              <Line type="monotone" dataKey="acceleration" stroke="hsl(var(--primary))" name="가속도의 크기" />
                             </LineChart>
                           </ResponsiveContainer>
                         </div>
@@ -1138,19 +1224,21 @@ const Index = () => {
                       <div className="grid grid-cols-2 gap-2 text-xs">
                         <div className="p-2 bg-secondary rounded">
                           <p className="text-muted-foreground">추적 장면</p>
-                          <p className="font-semibold">{frameROIs.size}개</p>
+                          <p className="font-semibold">{trackedFrameCount} / {extractedFrames.length}개</p>
                         </div>
                         <div className="p-2 bg-secondary rounded">
-                          <p className="text-muted-foreground">분석 시간</p>
-                          <p className="font-semibold">{(motionData[motionData.length - 1]?.time || 0).toFixed(2)}s</p>
+                          <p className="text-muted-foreground">분석 구간</p>
+                          <p className="font-semibold">{((motionData[motionData.length - 1]?.time ?? 0) - (motionData[0]?.time ?? 0)).toFixed(2)}s</p>
                         </div>
                         <div className="p-2 bg-secondary rounded">
                           <p className="text-muted-foreground">최대 속력</p>
                           <p className="font-semibold">{Math.max(...motionData.map((d) => d.speed)).toFixed(2)} {units.vel}</p>
                         </div>
                         <div className="p-2 bg-secondary rounded">
-                          <p className="text-muted-foreground">최대 가속도</p>
-                          <p className="font-semibold">{Math.max(...motionData.map((d) => d.acceleration)).toFixed(2)} {units.acc}</p>
+                          <p className="text-muted-foreground">최대 가속도 크기</p>
+                          <p className="font-semibold">
+                            {validAccelerations.length > 0 ? `${Math.max(...validAccelerations).toFixed(2)} ${units.acc}` : '-'}
+                          </p>
                         </div>
                       </div>
                     </div>
