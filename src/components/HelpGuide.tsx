@@ -98,7 +98,7 @@ export function useAutoShowHelp() {
 
 export function HelpButton({ onClick }: { onClick: () => void }) {
   return (
-    <Button variant="ghost" size="icon" onClick={onClick} aria-label="도움말 보기">
+    <Button variant="ghost" size="icon" className="h-11 w-11" onClick={onClick} aria-label="도움말 보기">
       <HelpCircle className="w-5 h-5" />
     </Button>
   );

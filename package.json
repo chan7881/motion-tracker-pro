@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "test": "node --experimental-strip-types --no-warnings --test tests/motionAnalysis.test.ts",
+    "test": "node --experimental-strip-types --no-warnings --test tests/motionAnalysis.test.ts tests/frameTiming.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

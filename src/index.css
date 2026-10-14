@@ -2,110 +2,90 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here.
-All colors MUST be HSL.
-*/
+/* 디자인 토큰. 색은 모두 HSL로 여기서만 정한다.
+   무채색 바탕 + 파란 강조색 하나. 휴대폰 설정(라이트/다크)을 따라간다. */
 
 @layer base {
-      :root {
-              --background: 220 26% 8%;
-              --foreground: 210 20% 96%;
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 222 40% 12%;
 
-        --card: 220 24% 11%;
-              --card-foreground: 210 20% 96%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 40% 12%;
 
-        --popover: 220 24% 11%;
-              --popover-foreground: 210 20% 96%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 40% 12%;
 
-        --primary: 189 94% 43%;
-              --primary-foreground: 189 100% 6%;
+    --primary: 221 78% 46%;
+    --primary-foreground: 0 0% 100%;
 
-        --secondary: 217 24% 20%;
-              --secondary-foreground: 210 20% 96%;
+    --secondary: 220 16% 94%;
+    --secondary-foreground: 222 40% 12%;
 
-        --muted: 217 24% 18%;
-              --muted-foreground: 215 16% 68%;
+    --muted: 220 16% 94%;
+    --muted-foreground: 220 10% 38%;
 
-        --accent: 171 76% 45%;
-              --accent-foreground: 189 100% 6%;
+    --accent: 220 16% 92%;
+    --accent-foreground: 222 40% 12%;
 
-        --destructive: 0 72% 51%;
-              --destructive-foreground: 210 20% 96%;
+    --destructive: 0 70% 46%;
+    --destructive-foreground: 0 0% 100%;
 
-        --border: 217 22% 22%;
-              --input: 217 22% 22%;
-              --ring: 189 94% 43%;
+    --border: 220 14% 87%;
+    --input: 220 14% 84%;
+    --ring: 221 78% 46%;
 
-        --radius: 1rem;
+    --radius: 0.625rem;
 
-        --gradient-primary: linear-gradient(135deg, hsl(189 94% 43%), hsl(171 76% 45%));
-              --shadow-glow: 0 0 40px hsl(189 94% 43% / 0.25);
+    /* 그래프 계열 색 (서로 뚜렷하게 구분) */
+    --chart-1: 221 78% 48%;
+    --chart-2: 22 88% 50%;
+  }
 
-        /* 그래프 계열 색상 (실측 데이터 시각화용 - 서로 뚜렷하게 구분됨) */
-        --chart-1: 213 68% 56%;
-              --chart-2: 17 82% 60%;
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: 222 22% 8%;
+      --foreground: 210 20% 95%;
 
-        --sidebar-background: 220 24% 11%;
-              --sidebar-foreground: 210 20% 96%;
-              --sidebar-primary: 189 94% 43%;
-              --sidebar-primary-foreground: 189 100% 6%;
-              --sidebar-accent: 217 24% 20%;
-              --sidebar-accent-foreground: 210 20% 96%;
-              --sidebar-border: 217 22% 22%;
-              --sidebar-ring: 189 94% 43%;
-      }
+      --card: 222 20% 11%;
+      --card-foreground: 210 20% 95%;
 
-  .dark {
-          --background: 220 26% 8%;
-          --foreground: 210 20% 96%;
+      --popover: 222 20% 13%;
+      --popover-foreground: 210 20% 95%;
 
-        --card: 220 24% 11%;
-          --card-foreground: 210 20% 96%;
+      --primary: 217 88% 62%;
+      --primary-foreground: 222 40% 8%;
 
-        --popover: 220 24% 11%;
-          --popover-foreground: 210 20% 96%;
+      --secondary: 220 16% 18%;
+      --secondary-foreground: 210 20% 95%;
 
-        --primary: 189 94% 43%;
-          --primary-foreground: 189 100% 6%;
+      --muted: 220 16% 16%;
+      --muted-foreground: 216 14% 68%;
 
-        --secondary: 217 24% 20%;
-          --secondary-foreground: 210 20% 96%;
+      --accent: 220 16% 20%;
+      --accent-foreground: 210 20% 95%;
 
-        --muted: 217 24% 18%;
-          --muted-foreground: 215 16% 68%;
+      --destructive: 0 72% 56%;
+      --destructive-foreground: 0 0% 100%;
 
-        --accent: 171 76% 45%;
-          --accent-foreground: 189 100% 6%;
+      --border: 220 14% 22%;
+      --input: 220 14% 26%;
+      --ring: 217 88% 62%;
 
-        --destructive: 0 72% 51%;
-          --destructive-foreground: 210 20% 96%;
-
-        --border: 217 22% 22%;
-          --input: 217 22% 22%;
-          --ring: 189 94% 43%;
-
-        --chart-1: 213 68% 56%;
-          --chart-2: 17 82% 60%;
-
-        --sidebar-background: 220 24% 11%;
-          --sidebar-foreground: 210 20% 96%;
-          --sidebar-primary: 189 94% 43%;
-          --sidebar-primary-foreground: 189 100% 6%;
-          --sidebar-accent: 217 24% 20%;
-          --sidebar-accent-foreground: 210 20% 96%;
-          --sidebar-border: 217 22% 22%;
-          --sidebar-ring: 189 94% 43%;
+      --chart-1: 214 90% 66%;
+      --chart-2: 24 92% 60%;
+    }
   }
 }
 
 @layer base {
-      * {
-              @apply border-border;
-      }
+  * {
+    @apply border-border;
+  }
 
   body {
-          @apply bg-background text-foreground;
-          /* 한국어를 낱말 중간(「모바/일」)이 아니라 띄어쓰기에서 줄바꿈 */
-          word-break: keep-all;
+    @apply bg-background text-foreground antialiased;
+    /* 한국어를 낱말 중간(「모바/일」)이 아니라 띄어쓰기에서 줄바꿈 */
+    word-break: keep-all;
   }
 }

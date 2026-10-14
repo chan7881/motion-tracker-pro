@@ -5,8 +5,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { VideoCanvas, VideoCanvasHandle, confidenceColor, TrailPoint } from '@/components/VideoCanvas';
+import { VideoCanvas, VideoCanvasHandle, confidenceColor, confidenceDash, frameBoxStyle, TrailPoint } from '@/components/VideoCanvas';
 import { FrameTrimmer } from '@/components/FrameTrimmer';
+import { FrameNavigator } from '@/components/FrameNavigator';
 import { HelpGuide, HelpButton, useAutoShowHelp } from '@/components/HelpGuide';
 import { useVideoFrame } from '@/hooks/useVideoFrame';
 import { useROISelection, ROI } from '@/hooks/useROISelection';
@@ -15,41 +16,104 @@ import { useOpticalFlowTracking } from '@/hooks/useOpticalFlowTracking';
 import { useToast } from '@/hooks/use-toast';
 import { analyzeMotion, computePixelsPerMeter, MotionData } from '@/utils/motionAnalysis';
 import {
-  Upload, Camera, Play, ChevronLeft, ChevronRight, Target, BarChart3,
-  CheckCircle, Download, Video, Ruler, Square
+  Upload, Camera, Play, Target, BarChart3, Activity,
+  CheckCircle, Check, Download, Video, Ruler, Square
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 type FrameROI = ROI & { confidence?: number };
 
 // 폰(390px)에서도 다섯 단계 이름이 겹치지 않게: 좁은 화면은 아이콘을 숨기고 두 줄까지 허용
-const STEP_TAB_CLASS = 'data-[state=active]:bg-gradient-primary data-[state=active]:text-primary-foreground min-h-11 h-auto px-1 sm:px-4 text-xs sm:text-sm leading-tight whitespace-normal break-keep sm:whitespace-nowrap';
+const STEP_TAB_CLASS = 'data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm min-h-11 h-auto px-1 sm:px-3 text-xs sm:text-sm leading-tight whitespace-normal break-keep sm:whitespace-nowrap';
 const STEP_ICON_CLASS = 'hidden sm:block w-4 h-4 mr-2 shrink-0';
+// 마친 단계 표시: 색만이 아니라 모양(체크)과 화면 읽기 프로그램용 글자를 함께 준다
+const StepDone = ({ done }: { done: boolean }) =>
+  done ? (
+    <>
+      <Check className="w-3.5 h-3.5 mr-0.5 shrink-0" aria-hidden="true" />
+      <span className="sr-only">(완료)</span>
+    </>
+  ) : null;
+
+// 카드 공통 모양
+const PANEL_CLASS = 'p-4 sm:p-5 shadow-sm';
+
+// 자주 쓰는 추출 FPS. 직접 입력도 된다
+const FPS_PRESETS = [10, 15, 30, 60];
+
+// 단계마다 같은 모양의 제목과 한 줄 안내
+const StepHeading = ({ title, description }: { title: string; description?: string }) => (
+  <div className="space-y-1">
+    <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+    {description && <p className="text-sm text-muted-foreground">{description}</p>}
+  </div>
+);
+
+// 아직 앞 단계를 하지 않았을 때
+const EmptyStep = ({ text }: { text: string }) => (
+  <p className="text-sm text-muted-foreground rounded-md border border-dashed px-3 py-6 text-center">{text}</p>
+);
+
+const StatTile = ({ label, value }: { label: string; value: string }) => (
+  <div className="rounded-md border bg-muted/40 px-3 py-2">
+    <p className="text-xs text-muted-foreground">{label}</p>
+    <p className="text-sm font-semibold tabular-nums">{value}</p>
+  </div>
+);
 
 // 그래프 축 이름이 폰에서 잘리거나 눈금 숫자와 겹치지 않도록 여백과 정렬을 한곳에서 정한다
 const CHART_MARGIN = { top: 10, right: 10, bottom: 20, left: 16 };
-const X_AXIS_LABEL = { value: '시간 (s)', position: 'insideBottom' as const, offset: -12 };
+const X_AXIS_LABEL = { value: '시간 (s)', position: 'insideBottom' as const, offset: -12, fill: 'hsl(var(--muted-foreground))', fontSize: 13 };
+// 시간축은 반드시 수(number)축이어야 한다. Recharts 기본값인 범주축은 점을 순서대로 같은 간격에
+// 놓아서, 추적에 실패해 빠진 장면이 있으면 그 틈이 사라지고 기울기(속력)·모양이 실제와 달라진다.
+const TIME_AXIS = {
+  dataKey: 'time',
+  type: 'number' as const,
+  domain: [0, 'auto'] as [number, string],
+  label: X_AXIS_LABEL
+};
 const yAxisLabel = (value: string) => ({
   value,
   angle: -90,
   position: 'insideLeft' as const,
+  fill: 'hsl(var(--muted-foreground))',
+  fontSize: 13,
   style: { textAnchor: 'middle' as const }
 });
-// 툴팁: 흰 바탕에서 잘 읽히는 글자색, 시간과 값에 단위를 붙인다
+// 그래프 눈금·격자·툴팁은 화면 테마 색(라이트/다크)을 따른다
+const AXIS_PROPS = {
+  stroke: 'hsl(var(--border))',
+  tick: { fill: 'hsl(var(--muted-foreground))', fontSize: 12 },
+  tickLine: false
+};
+const GRID_PROPS = { stroke: 'hsl(var(--border))', strokeDasharray: '3 3', vertical: false };
+// 툴팁: 시간과 값에 단위를 붙인다
 const tooltipProps = (unit: string) => ({
   labelFormatter: (t: number) => `${t} s`,
   formatter: (v: number, name: string) => [`${v} ${unit}`, name] as [string, string],
-  labelStyle: { color: '#111827', fontWeight: 600 }
+  contentStyle: {
+    background: 'hsl(var(--popover))',
+    border: '1px solid hsl(var(--border))',
+    borderRadius: 8,
+    fontSize: 13
+  },
+  labelStyle: { color: 'hsl(var(--popover-foreground))', fontWeight: 600 }
 });
+// 장면이 많으면 점을 작게 (선 모양이 점에 묻히지 않게). 선 애니메이션은 끈다 — 측정 도구라 꾸밈이
+// 필요 없고, 화면 크기가 바뀔 때마다 선이 반만 그려진 채로 다시 그려지는 것이 학생에게 혼란을 준다
+const lineDot = (n: number) => (n > 40 ? { r: 1.5 } : { r: 3 });
 
 const Index = () => {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState('upload');
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [fps, setFps] = useState(10);
+  // FPS 직접 입력칸에 친 글자 (버튼으로 고르면 비운다)
+  const [fpsInput, setFpsInput] = useState('');
   const [frameROIs, setFrameROIs] = useState<Map<number, FrameROI>>(new Map());
   const [manualFrames, setManualFrames] = useState<Set<number>>(new Set());
-  const [motionData, setMotionData] = useState<MotionData[]>([]);
+  // 추적을 마쳐 결과를 보여 줄 상태인지. 결과 값 자체는 아래 motionData에서 매번 계산한다
+  const [hasResults, setHasResults] = useState(false);
   const [activeChart, setActiveChart] = useState<'position' | 'velocity' | 'acceleration'>('position');
   const [videoWithROI, setVideoWithROI] = useState<string | null>(null);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
@@ -57,6 +121,8 @@ const Index = () => {
   // 실측 스케일 보정
   const [pixelsPerMeter, setPixelsPerMeter] = useState<number | null>(null);
   const [realLengthInput, setRealLengthInput] = useState('');
+  // 크기 보정 단계를 마쳤는지(보정했거나 건너뛰었거나) — 단계 탭의 완료 표시용
+  const [calibrationDecided, setCalibrationDecided] = useState(false);
 
   // 카메라 촬영
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -79,6 +145,14 @@ const Index = () => {
   const { extractedFrames, frameFps, isExtracting, progress, extractFrames, cropFrames, reset } = useVideoFrame();
   // 시간 계산은 입력칸 값이 아니라 실제로 추출에 쓴 FPS로 한다 (추출 뒤 입력칸을 바꿔도 결과가 틀어지지 않게)
   const analysisFps = frameFps ?? fps;
+
+  // 결과는 지금의 위치·크기 보정·FPS에서 매번 다시 계산한다. 추적할 때 한 번 저장해 두면,
+  // 결과를 본 뒤 크기 보정을 다시 했을 때 값은 px 그대로인데 단위만 m로 바뀌어 틀린 값이 된다.
+  const motionData = useMemo<MotionData[]>(() => {
+    if (!hasResults || extractedFrames.length === 0) return [];
+    return analyzeMotion(frameROIs, analysisFps, pixelsPerMeter, extractedFrames[0].canvas.height);
+  }, [hasResults, extractedFrames, frameROIs, analysisFps, pixelsPerMeter]);
+
   const { isTracking, progress: trackingProgress, trackObjectAcrossFrames } = useOpticalFlowTracking();
   const { open: helpOpen, setOpen: setHelpOpen } = useAutoShowHelp();
 
@@ -89,8 +163,16 @@ const Index = () => {
     }
   };
 
+  // 네모를 다 그리면(또는 톡 누르면) 지금 장면에 바로 저장한다 — 따로 「저장」을 누르지 않아도 된다
+  const saveRoiForCurrentFrame = useCallback((r: ROI) => {
+    if (r.w < 4 || r.h < 4) return;
+    setFrameROIs((prev) => new Map(prev).set(currentFrameIndex, { ...r }));
+    setManualFrames((prev) => new Set(prev).add(currentFrameIndex));
+  }, [currentFrameIndex]);
+
   const { roi, handlePointerDown, handlePointerMove, handlePointerUp, clearROI } = useROISelection(
-    canvasRefGetter as React.RefObject<HTMLCanvasElement>
+    canvasRefGetter as React.RefObject<HTMLCanvasElement>,
+    saveRoiForCurrentFrame
   );
 
   const {
@@ -135,7 +217,7 @@ const Index = () => {
     setCurrentFrameIndex(0);
     setFrameROIs(new Map());
     setManualFrames(new Set());
-    setMotionData([]);
+    setHasResults(false);
     replaceVideoWithROI(null);
     clearROI();
   }, [clearROI, replaceVideoWithROI]);
@@ -145,11 +227,14 @@ const Index = () => {
     clearTrackingResults();
     setPixelsPerMeter(null);
     setRealLengthInput('');
+    setCalibrationDecided(false);
     clearCalibrationLine();
   }, [reset, clearTrackingResults, clearCalibrationLine]);
 
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // 같은 파일을 다시 골라도 onChange가 오도록 비운다 (실패한 뒤 같은 영상을 다시 올릴 때)
+    e.target.value = '';
     if (!file) return;
 
     // 브라우저/OS가 MIME 타입을 못 알아내는 경우가 있다 (예: 일부 환경에서 .mov가
@@ -175,12 +260,7 @@ const Index = () => {
     setVideoUrl(url);
     resetForNewVideo();
 
-    toast({
-      title: '영상 업로드 완료',
-      description: `${file.name} 파일을 불러왔습니다`
-    });
-
-    // Auto-advance to extract tab
+    // 다음 단계로 바로 넘어가므로 따로 알리지 않는다 (알림이 폰 위쪽 단계 탭을 가린다)
     setCurrentTab('extract');
   }, [videoUrl, resetForNewVideo, toast]);
 
@@ -190,6 +270,16 @@ const Index = () => {
       toast({
         title: '영상 없음',
         description: '먼저 영상을 올려주세요',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    // 입력칸의 max·min은 화살표에만 걸리고 직접 친 값은 막지 않으므로 여기서 확인한다
+    if (!(fps >= 1 && fps <= 60)) {
+      toast({
+        title: '프레임레이트를 확인해 주세요',
+        description: '프레임레이트(FPS)는 1부터 60 사이로 넣어 주세요.',
         variant: 'destructive'
       });
       return;
@@ -205,19 +295,16 @@ const Index = () => {
           variant: 'destructive',
           duration: 12000 // 문장이 길어 기본 5초로는 다 읽기 어렵다
         });
-      } else {
-        toast({
-          title: '프레임 추출 완료',
-          description: `${count}개의 장면을 추출했습니다. 필요하면 구간을 잘라주세요.`
-        });
       }
 
       // 크기 보정으로 자동 이동하지 않고 이 탭에 남아 구간 자르기(트림) UI를 보여준다
+      // (추출한 장면 수는 화면에 나오므로 성공 알림은 띄우지 않는다)
     } catch (error) {
       toast({
         title: '추출 실패',
         description: error instanceof Error ? error.message : '프레임을 추출하지 못했습니다',
-        variant: 'destructive'
+        variant: 'destructive',
+        duration: 12000 // 무엇을 바꿔야 하는지 적힌 긴 문장이라 기본 5초로는 다 읽기 어렵다
       });
     }
   }, [extractFrames, fps, toast, clearTrackingResults]);
@@ -225,12 +312,8 @@ const Index = () => {
   const handleApplyCrop = useCallback((startIndex: number, endIndex: number) => {
     cropFrames(startIndex, endIndex);
     clearTrackingResults();
-    toast({
-      title: '구간 적용 완료',
-      description: `${endIndex - startIndex + 1}개 장면만 남기고 잘랐습니다`
-    });
     setCurrentTab('calibrate');
-  }, [cropFrames, clearTrackingResults, toast]);
+  }, [cropFrames, clearTrackingResults]);
 
   const handleSkipCrop = useCallback(() => {
     setCurrentTab('calibrate');
@@ -256,11 +339,6 @@ const Index = () => {
 
       streamRef.current = stream;
       setIsCameraActive(true);
-
-      toast({
-        title: '카메라 켜짐',
-        description: '준비되면 촬영 시작 버튼을 눌러주세요'
-      });
     } catch (error) {
       toast({
         title: '카메라 오류',
@@ -300,12 +378,6 @@ const Index = () => {
 
       setVideoUrl(url);
       resetForNewVideo();
-
-      toast({
-        title: '촬영 완료',
-        description: '녹화된 영상이 저장되었습니다'
-      });
-
       setCurrentTab('extract');
     };
 
@@ -313,7 +385,7 @@ const Index = () => {
     recorder.start();
     setIsRecording(true);
     setRecordingSeconds(0);
-  }, [videoUrl, resetForNewVideo, toast, stopCameraStream]);
+  }, [videoUrl, resetForNewVideo, stopCameraStream]);
 
   const handleStopRecording = useCallback(() => {
     mediaRecorderRef.current?.stop();
@@ -324,17 +396,26 @@ const Index = () => {
     setCurrentFrameIndex(index);
   }, [clearROI]);
 
-  const handlePrevFrame = useCallback(() => {
-    if (currentFrameIndex > 0) {
-      jumpToFrame(currentFrameIndex - 1);
-    }
-  }, [currentFrameIndex, jumpToFrame]);
-
-  const handleNextFrame = useCallback(() => {
-    if (currentFrameIndex < extractedFrames.length - 1) {
-      jumpToFrame(currentFrameIndex + 1);
-    }
+  const goToFrame = useCallback((index: number) => {
+    const clamped = Math.max(0, Math.min(index, extractedFrames.length - 1));
+    if (clamped !== currentFrameIndex) jumpToFrame(clamped);
   }, [currentFrameIndex, extractedFrames.length, jumpToFrame]);
+
+  // 지금 장면에 직접 지정한 네모를 지운다 (잘못 눌렀을 때)
+  const handleClearCurrentRoi = useCallback(() => {
+    clearROI();
+    if (!manualFrames.has(currentFrameIndex)) return;
+    setManualFrames((prev) => {
+      const next = new Set(prev);
+      next.delete(currentFrameIndex);
+      return next;
+    });
+    setFrameROIs((prev) => {
+      const next = new Map(prev);
+      next.delete(currentFrameIndex);
+      return next;
+    });
+  }, [clearROI, manualFrames, currentFrameIndex]);
 
   const handleConfirmCalibration = useCallback(() => {
     const realLength = parseFloat(realLengthInput);
@@ -350,6 +431,7 @@ const Index = () => {
     }
 
     setPixelsPerMeter(ppm);
+    setCalibrationDecided(true);
     toast({
       title: '크기 보정 완료',
       description: `1m = ${ppm.toFixed(1)}px 로 설정했습니다`
@@ -359,20 +441,10 @@ const Index = () => {
 
   const handleSkipCalibration = useCallback(() => {
     setPixelsPerMeter(null);
+    setCalibrationDecided(true);
     setCurrentTab('roi');
   }, []);
 
-  const handleSaveROI = useCallback(() => {
-    if (roi) {
-      setFrameROIs((prev) => new Map(prev).set(currentFrameIndex, { ...roi }));
-      setManualFrames((prev) => new Set(prev).add(currentFrameIndex));
-      clearROI();
-      toast({
-        title: '위치 저장됨',
-        description: `${currentFrameIndex + 1}번째 장면에 물체 위치를 저장했습니다`
-      });
-    }
-  }, [roi, currentFrameIndex, toast, clearROI]);
 
   const generateVideoWithROI = useCallback(async (rois: Map<number, FrameROI>) => {
     if (extractedFrames.length === 0) return;
@@ -434,15 +506,18 @@ const Index = () => {
 
           ctx.strokeStyle = color;
           ctx.lineWidth = 3;
+          ctx.setLineDash(confidenceDash(frameRoi.confidence));
           ctx.strokeRect(frameRoi.x, frameRoi.y, frameRoi.w, frameRoi.h);
+          ctx.setLineDash([]);
 
           ctx.fillStyle = color;
           ctx.beginPath();
           ctx.arc(centerX, centerY, 5, 0, 2 * Math.PI);
           ctx.fill();
 
-          ctx.font = '16px sans-serif';
-          ctx.fillText(`Frame ${i + 1}`, frameRoi.x, frameRoi.y - 8);
+          // 경로 영상은 폰에서 작게 줄어 보이므로 화면 높이에 맞춰 글자를 키운다
+          ctx.font = `bold ${Math.max(16, Math.round(canvas.height / 16))}px sans-serif`;
+          ctx.fillText(`장면 ${i + 1}`, frameRoi.x, frameRoi.y - 8);
         }
 
         if (trailSoFar.length > 1) {
@@ -462,6 +537,9 @@ const Index = () => {
 
       mediaRecorder.stop();
       await stopped;
+      // 아이폰은 다 쓴 캔버스도 메모리를 잡고 있으므로 0×0으로 줄여 돌려준다
+      canvas.width = 0;
+      canvas.height = 0;
     } catch (error) {
       if (job === videoJobRef.current) {
         toast({
@@ -511,7 +589,7 @@ const Index = () => {
       throw new Error('운동 데이터를 생성할 수 없습니다. 추적에 성공한 장면이 2개 이상 있어야 합니다.');
     }
 
-    setMotionData(motion);
+    setHasResults(true);
     // 경로 영상은 장면 수만큼 실제 시간이 걸리므로 기다리지 않고 결과부터 보여 준다
     void generateVideoWithROI(merged);
 
@@ -535,10 +613,6 @@ const Index = () => {
     try {
       await runTracking(firstFrameWithROI, initialROI);
       setCurrentTab('analyze');
-      toast({
-        title: '추적 완료',
-        description: '물체를 추적하고 운동을 분석했습니다'
-      });
     } catch (error) {
       toast({
         title: '추적 실패',
@@ -584,12 +658,7 @@ const Index = () => {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-
-    toast({
-      title: '다운로드 시작',
-      description: '경로가 표시된 영상 다운로드가 시작되었습니다'
-    });
-  }, [videoWithROI, toast]);
+  }, [videoWithROI]);
 
   // 크기 보정을 했으면 m 계열, 안 했으면 원본 픽셀 단위로 표시
   const units = useMemo(() => ({
@@ -627,8 +696,8 @@ const Index = () => {
       ...rows.map((row) => row.join(','))
     ].join('\n');
 
-    // Create blob and download
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    // 엑셀은 BOM이 없는 UTF-8 CSV를 CP949로 읽어 「s²」 같은 글자가 깨지므로 BOM을 붙인다
+    const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -637,12 +706,7 @@ const Index = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-
-    toast({
-      title: 'CSV 다운로드',
-      description: '분석 결과가 CSV 파일로 다운로드되었습니다'
-    });
-  }, [motionData, toast, units]);
+  }, [motionData, units]);
 
   const currentFrame = extractedFrames[currentFrameIndex] || null;
   const showVideo = currentTab === 'upload' || (currentTab === 'extract' && extractedFrames.length === 0);
@@ -698,39 +762,54 @@ const Index = () => {
   }));
   const validAccelerations = motionData.filter((d) => d.accelValid).map((d) => d.acceleration);
 
+  const stepDone = {
+    upload: !!videoUrl,
+    extract: extractedFrames.length > 0,
+    calibrate: calibrationDecided,
+    roi: hasResults
+  };
+  const firstFrameSize = extractedFrames[0]
+    ? { w: extractedFrames[0].canvas.width, h: extractedFrames[0].canvas.height }
+    : { w: 16, h: 9 };
+
   return (
     <div className="min-h-screen bg-background">
-      <div className="container mx-auto p-4 max-w-6xl">
-        <header className="mb-8 text-center relative">
-          <div className="absolute right-0 top-0">
-            <HelpButton onClick={() => setHelpOpen(true)} />
+      <header className="border-b bg-card">
+        <div className="mx-auto max-w-6xl px-3 sm:px-4 h-14 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-md bg-primary text-primary-foreground flex items-center justify-center shrink-0">
+            <Activity className="w-4 h-4" aria-hidden="true" />
           </div>
-          <h1 className="text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent mb-2">
-            Motion Tracker
-          </h1>
-          <p className="text-muted-foreground">
-            동영상에서 물체를 지정해 운동을 분석해요 (모바일 지원)
-          </p>
-        </header>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-base sm:text-lg font-semibold leading-tight tracking-tight">Motion Tracker</h1>
+            <p className="hidden sm:block text-xs text-muted-foreground">동영상에서 물체를 지정해 운동을 분석해요</p>
+          </div>
+          <HelpButton onClick={() => setHelpOpen(true)} />
+        </div>
+      </header>
 
-        <HelpGuide open={helpOpen} onOpenChange={setHelpOpen} />
+      <HelpGuide open={helpOpen} onOpenChange={setHelpOpen} />
 
-        <Tabs value={currentTab} onValueChange={setCurrentTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 bg-card h-auto">
+      <main className="mx-auto max-w-6xl px-3 sm:px-4 py-4 sm:py-6">
+        <Tabs value={currentTab} onValueChange={setCurrentTab} className="space-y-4 sm:space-y-6">
+          <TabsList className="grid w-full grid-cols-5 h-auto p-1">
             <TabsTrigger value="upload" className={STEP_TAB_CLASS}>
               <Upload className={STEP_ICON_CLASS} />
+              <StepDone done={stepDone.upload} />
               1. 촬영
             </TabsTrigger>
             <TabsTrigger value="extract" className={STEP_TAB_CLASS}>
               <Play className={STEP_ICON_CLASS} />
+              <StepDone done={stepDone.extract} />
               2. 장면 추출
             </TabsTrigger>
             <TabsTrigger value="calibrate" className={STEP_TAB_CLASS}>
               <Ruler className={STEP_ICON_CLASS} />
+              <StepDone done={stepDone.calibrate} />
               3. 크기 보정
             </TabsTrigger>
             <TabsTrigger value="roi" className={STEP_TAB_CLASS}>
               <Target className={STEP_ICON_CLASS} />
+              <StepDone done={stepDone.roi} />
               4. 물체 지정
             </TabsTrigger>
             <TabsTrigger value="analyze" className={STEP_TAB_CLASS}>
@@ -739,14 +818,15 @@ const Index = () => {
             </TabsTrigger>
           </TabsList>
 
-          <div className="grid md:grid-cols-3 gap-6">
-            <Card className="md:col-span-2 p-6 bg-card border-border">
+          <div className="grid md:grid-cols-3 gap-4 sm:gap-6 items-start">
+            <Card className={`md:col-span-2 ${PANEL_CLASS}`}>
               {currentTab === 'analyze' && videoWithROI ? (
-                <div className="w-full aspect-video bg-black rounded-lg overflow-hidden">
+                <div className="mx-auto bg-black rounded-lg overflow-hidden" style={frameBoxStyle(firstFrameSize.w, firstFrameSize.h)}>
                   <video
                     src={videoWithROI}
                     controls
                     loop
+                    playsInline
                     className="w-full h-full object-contain"
                   />
                 </div>
@@ -793,86 +873,59 @@ const Index = () => {
               )}
             </Card>
 
-            <Card className="p-6 bg-card border-border space-y-4">
+            <Card className={`${PANEL_CLASS} space-y-4`}>
               <TabsContent value="upload" className="mt-0 space-y-4">
                 {!isCameraActive ? (
                   <>
-                    <div>
-                      <Label htmlFor="video-upload" className="text-lg font-semibold mb-3 block">
-                        비디오 업로드
-                      </Label>
-                      <input
-                        ref={fileInputRef}
-                        id="video-upload"
-                        type="file"
-                        accept="video/*"
-                        onChange={handleFileUpload}
-                        className="hidden"
-                      />
-                      <Button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-full bg-gradient-primary hover:opacity-90"
-                        size="lg"
-                      >
-                        <Upload className="w-4 h-4 mr-2" />
-                        파일 선택
-                      </Button>
-                    </div>
+                    <StepHeading title="영상 올리기" description="물체가 움직이는 영상을 올리거나, 카메라로 바로 찍어요." />
+
+                    <input
+                      ref={fileInputRef}
+                      id="video-upload"
+                      type="file"
+                      accept="video/*"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                    <Button onClick={() => fileInputRef.current?.click()} className="w-full" size="lg">
+                      <Upload className="w-4 h-4 mr-2" />
+                      영상 파일 선택
+                    </Button>
 
                     <div className="relative">
                       <div className="absolute inset-0 flex items-center">
                         <span className="w-full border-t border-border" />
                       </div>
-                      <div className="relative flex justify-center text-xs uppercase">
+                      <div className="relative flex justify-center text-xs">
                         <span className="bg-card px-2 text-muted-foreground">또는</span>
                       </div>
                     </div>
 
-                    <Button
-                      onClick={handleStartCamera}
-                      variant="outline"
-                      className="w-full"
-                      size="lg"
-                    >
+                    <Button onClick={handleStartCamera} variant="outline" className="w-full" size="lg">
                       <Camera className="w-4 h-4 mr-2" />
                       카메라 켜기
                     </Button>
 
-                    <p className="text-sm text-muted-foreground text-center mt-4">
-                      카메라로 촬영하거나 비디오 파일을 업로드하세요
+                    <p className="text-xs text-muted-foreground rounded-md bg-muted px-3 py-2">
+                      휴대폰은 움직이지 않게 고정하고, 길이를 아는 자를 함께 찍으면 실제 단위(m)로 분석할 수 있어요.
                     </p>
                   </>
                 ) : (
                   <>
-                    <p className="text-sm font-medium">카메라가 켜졌어요</p>
-                    <p className="text-xs text-muted-foreground">
-                      움직이는 물체가 잘 보이도록 화면을 맞춘 뒤 촬영 시작을 눌러주세요
-                    </p>
+                    <StepHeading title="카메라가 켜졌어요" description="움직이는 물체가 잘 보이도록 화면을 맞춘 뒤 촬영 시작을 눌러 주세요." />
 
                     {!isRecording ? (
                       <>
-                        <Button
-                          onClick={handleStartRecording}
-                          className="w-full bg-gradient-primary hover:opacity-90"
-                          size="lg"
-                        >
+                        <Button onClick={handleStartRecording} className="w-full" size="lg">
                           <Video className="w-4 h-4 mr-2" />
                           촬영 시작
                         </Button>
-                        <Button
-                          onClick={handleCancelCamera}
-                          variant="outline"
-                          className="w-full"
-                        >
+                        <Button onClick={handleCancelCamera} variant="outline" className="w-full">
                           카메라 끄기
                         </Button>
                       </>
                     ) : (
-                      <Button
-                        onClick={handleStopRecording}
-                        className="w-full bg-destructive text-destructive-foreground hover:opacity-90"
-                        size="lg"
-                      >
+                      <Button onClick={handleStopRecording} variant="destructive" className="w-full" size="lg">
                         <Square className="w-4 h-4 mr-2" />
                         촬영 종료 ({recordingSeconds}초)
                       </Button>
@@ -882,65 +935,63 @@ const Index = () => {
               </TabsContent>
 
               <TabsContent value="extract" className="mt-0 space-y-4">
+                <StepHeading title="장면 추출" description="영상에서 1초에 몇 장면을 뽑을지 고른 뒤 추출해요." />
+
                 <div className="space-y-2">
-                  <Label htmlFor="fps">프레임레이트 (FPS)</Label>
-                  <Input
-                    id="fps"
-                    type="number"
-                    min="1"
-                    max="60"
-                    value={fps}
-                    onChange={(e) => setFps(Number(e.target.value))}
-                    className="bg-secondary"
-                  />
+                  <Label htmlFor="fps">1초에 뽑을 장면 수 (FPS)</Label>
+                  <div className="grid grid-cols-5 gap-2">
+                    {FPS_PRESETS.map((v) => (
+                      <Button
+                        key={v}
+                        type="button"
+                        variant={fps === v ? 'default' : 'outline'}
+                        aria-pressed={fps === v}
+                        onClick={() => {
+                          setFps(v);
+                          setFpsInput('');
+                        }}
+                        className="px-0 tabular-nums"
+                      >
+                        {v}
+                      </Button>
+                    ))}
+                    <Input
+                      id="fps"
+                      type="number"
+                      inputMode="numeric"
+                      min="1"
+                      max="60"
+                      // 버튼으로 고르면 칸은 비워 두어 같은 숫자가 두 번 보이지 않게 한다
+                      value={fpsInput}
+                      placeholder="직접"
+                      onChange={(e) => {
+                        setFpsInput(e.target.value);
+                        setFps(Number(e.target.value));
+                      }}
+                      aria-label="FPS 직접 입력"
+                      className="h-11 px-2 text-center tabular-nums"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    빠른 운동일수록 크게 해요. 찍은 영상의 FPS(휴대폰은 보통 30이나 60)보다 크게 하지는 않아요.
+                  </p>
                 </div>
 
-                <Button
-                  onClick={handleExtractFrames}
-                  disabled={!videoUrl || isExtracting}
-                  className="w-full bg-gradient-primary hover:opacity-90"
-                  size="lg"
-                >
+                <Button onClick={handleExtractFrames} disabled={!videoUrl || isExtracting} className="w-full" size="lg">
                   {isExtracting ? '추출 중...' : '장면 추출 시작'}
                 </Button>
 
                 {isExtracting && (
                   <div className="space-y-2">
                     <Progress value={progress} className="w-full" />
-                    <p className="text-sm text-center text-muted-foreground">{progress}%</p>
+                    <p className="text-sm text-center text-muted-foreground tabular-nums">{progress}%</p>
                   </div>
                 )}
 
                 {extractedFrames.length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-sm font-medium">
-                      {extractedFrames.length}개 장면 추출 완료
-                    </p>
-
-                    <div className="flex items-center gap-2">
-                      <Button
-                        onClick={handlePrevFrame}
-                        disabled={currentFrameIndex === 0}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </Button>
-
-                      <div className="flex-1 text-center text-sm">
-                        장면 {currentFrameIndex + 1} / {extractedFrames.length}
-                      </div>
-
-                      <Button
-                        onClick={handleNextFrame}
-                        disabled={currentFrameIndex >= extractedFrames.length - 1}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </Button>
-                    </div>
-
+                  <div className="space-y-3 pt-1">
+                    <p className="text-sm font-medium">{extractedFrames.length}개 장면을 뽑았어요</p>
+                    <FrameNavigator index={currentFrameIndex} count={extractedFrames.length} onChange={goToFrame} />
                     <FrameTrimmer
                       frames={extractedFrames}
                       fps={analysisFps}
@@ -956,69 +1007,33 @@ const Index = () => {
               <TabsContent value="calibrate" className="mt-0 space-y-4">
                 {extractedFrames.length > 0 ? (
                   <>
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium">크기 보정</p>
-                      <p className="text-xs text-muted-foreground">
-                        화면 속 자나 길이를 알고 있는 물건(예: 책상)을 따라 선을 그어주세요
-                      </p>
-                    </div>
+                    <StepHeading title="크기 보정" description="화면 속 자나 길이를 아는 물건(예: 책상)을 따라 선을 그어 주세요." />
 
-                    <div className="flex items-center gap-2">
-                      <Button
-                        onClick={handlePrevFrame}
-                        disabled={currentFrameIndex === 0}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </Button>
-
-                      <div className="flex-1 text-center text-sm">
-                        장면 {currentFrameIndex + 1} / {extractedFrames.length}
-                      </div>
-
-                      <Button
-                        onClick={handleNextFrame}
-                        disabled={currentFrameIndex >= extractedFrames.length - 1}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </Button>
-                    </div>
+                    <FrameNavigator index={currentFrameIndex} count={extractedFrames.length} onChange={goToFrame} />
 
                     <div className="space-y-2">
-                      <Label htmlFor="real-length">실제 길이 (m)</Label>
+                      <Label htmlFor="real-length">선의 실제 길이 (m)</Label>
                       <Input
                         id="real-length"
                         type="number"
+                        inputMode="decimal"
                         min="0.01"
                         step="0.01"
                         placeholder="예: 1"
                         value={realLengthInput}
                         onChange={(e) => setRealLengthInput(e.target.value)}
-                        className="bg-secondary"
+                        className="h-11"
                       />
-                    </div>
-
-                    {calibrationLine && (
                       <p className="text-xs text-muted-foreground">
-                        화면상 길이: {calPixelDistance.toFixed(1)}px
+                        30 cm는 0.3, 50 cm는 0.5로 넣어요.
+                        {calibrationLine && <> 화면에서 그은 길이: <span className="tabular-nums">{calPixelDistance.toFixed(1)}px</span></>}
                       </p>
-                    )}
-
-                    <Button
-                      onClick={clearCalibrationLine}
-                      variant="outline"
-                      className="w-full"
-                    >
-                      선 다시 긋기
-                    </Button>
+                    </div>
 
                     <Button
                       onClick={handleConfirmCalibration}
                       disabled={!calibrationLine || !(parseFloat(realLengthInput) > 0)}
-                      className="w-full bg-gradient-primary hover:opacity-90"
+                      className="w-full"
                       size="lg"
                     >
                       <Ruler className="w-4 h-4 mr-2" />
@@ -1026,88 +1041,51 @@ const Index = () => {
                     </Button>
 
                     {pixelsPerMeter && (
-                      <p className="text-xs text-primary">
+                      <p className="text-xs text-primary font-medium">
                         보정됨: 1m = {pixelsPerMeter.toFixed(1)}px
                       </p>
                     )}
 
-                    <Button
-                      onClick={handleSkipCalibration}
-                      variant="ghost"
-                      className="w-full text-muted-foreground"
-                    >
-                      건너뛰기 (픽셀 단위로 분석)
-                    </Button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button onClick={clearCalibrationLine} variant="outline">
+                        선 다시 긋기
+                      </Button>
+                      <Button onClick={handleSkipCalibration} variant="ghost" className="text-muted-foreground">
+                        건너뛰기 (px)
+                      </Button>
+                    </div>
                   </>
                 ) : (
-                  <p className="text-sm text-muted-foreground">
-                    먼저 장면을 추출해주세요
-                  </p>
+                  <EmptyStep text="먼저 2단계에서 장면을 추출해 주세요." />
                 )}
               </TabsContent>
 
               <TabsContent value="roi" className="mt-0 space-y-4">
                 {extractedFrames.length > 0 ? (
                   <>
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium">물체 지정</p>
-                      <p className="text-xs text-muted-foreground">
-                        화면을 드래그해서 움직이는 물체를 네모로 감싸주세요
-                      </p>
-                    </div>
+                    <StepHeading
+                      title="물체 지정"
+                      description="움직이는 물체를 톡 누르거나, 드래그해서 네모로 감싸요. 한 장면에서만 지정해도 나머지는 자동으로 따라가요. 손이나 다른 물체와 떨어져 있는 장면에서 지정하면 더 잘 따라가요."
+                    />
 
-                    <div className="flex items-center gap-2">
-                      <Button
-                        onClick={handlePrevFrame}
-                        disabled={currentFrameIndex === 0}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </Button>
+                    <FrameNavigator index={currentFrameIndex} count={extractedFrames.length} onChange={goToFrame} />
 
-                      <div className="flex-1 text-center text-sm">
-                        장면 {currentFrameIndex + 1} / {extractedFrames.length}
-                      </div>
-
-                      <Button
-                        onClick={handleNextFrame}
-                        disabled={currentFrameIndex >= extractedFrames.length - 1}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </Button>
-                    </div>
-
-                    {roi && (
-                      <Button
-                        onClick={handleSaveROI}
-                        className="w-full bg-gradient-primary hover:opacity-90"
-                      >
-                        <Target className="w-4 h-4 mr-2" />
-                        위치 저장
+                    {manualFrames.has(currentFrameIndex) && (
+                      <Button onClick={handleClearCurrentRoi} variant="outline" className="w-full">
+                        이 장면에 지정한 네모 지우기
                       </Button>
                     )}
 
-                    <Button
-                      onClick={clearROI}
-                      variant="outline"
-                      className="w-full"
-                    >
-                      위치 초기화
-                    </Button>
-
                     <div className="pt-4 border-t border-border space-y-3">
                       <p className="text-xs text-muted-foreground">
-                        직접 지정한 장면: {manualFrames.size}개
-                        {trackedFrameCount > manualFrames.size && ` · 자동 추적한 장면: ${trackedFrameCount} / ${extractedFrames.length}개`}
+                        직접 지정한 장면 {manualFrames.size}개
+                        {trackedFrameCount > manualFrames.size && ` · 자동 추적한 장면 ${trackedFrameCount} / ${extractedFrames.length}개`}
                       </p>
 
                       <Button
                         onClick={handleCompleteROISelection}
                         disabled={manualFrames.size === 0 || isTracking}
-                        className="w-full bg-gradient-primary hover:opacity-90"
+                        className="w-full"
                         size="lg"
                       >
                         <CheckCircle className="w-4 h-4 mr-2" />
@@ -1128,7 +1106,7 @@ const Index = () => {
                       {lowConfidenceFrames.length > 0 && (
                         <div className="space-y-2">
                           <p className="text-xs text-muted-foreground">
-                            추적이 흔들린 장면이에요. 눌러서 확인하고 위치를 다시 지정해보세요.
+                            추적이 흔들린 장면이에요(네모가 점선). 눌러서 확인하고 네모를 다시 그려 보세요.
                           </p>
                           <div className="flex flex-wrap gap-1">
                             {lowConfidenceFrames.map((idx) => (
@@ -1137,7 +1115,7 @@ const Index = () => {
                                 size="sm"
                                 variant="secondary"
                                 onClick={() => jumpToFrame(idx)}
-                                className="h-7 px-2 text-xs"
+                                className="h-11 min-w-11 px-2 text-xs tabular-nums"
                               >
                                 #{idx + 1}
                               </Button>
@@ -1148,19 +1126,19 @@ const Index = () => {
                     </div>
                   </>
                 ) : (
-                  <p className="text-sm text-muted-foreground">
-                    먼저 장면을 추출해주세요
-                  </p>
+                  <EmptyStep text="먼저 2단계에서 장면을 추출해 주세요." />
                 )}
               </TabsContent>
 
               <TabsContent value="analyze" className="mt-0 space-y-4">
                 {motionData.length > 0 ? (
                   <>
+                    <StepHeading title="결과" />
+
                     {pixelsPerMeter === null && (
-                      <div className="text-xs bg-blue-500/10 text-blue-200 rounded p-2">
-                        크기 보정을 하지 않아 위치·속력 값이 픽셀(px) 단위로 표시돼요. 실제 단위(m)로 보려면 3단계에서 크기 보정을 해주세요.
-                      </div>
+                      <p className="text-xs rounded-md border border-primary/30 bg-primary/10 px-3 py-2">
+                        크기 보정을 하지 않아 위치·속력 값이 픽셀(px) 단위로 표시돼요. 실제 단위(m)로 보려면 3단계에서 크기 보정을 해 주세요.
+                      </p>
                     )}
 
                     <p className="text-xs text-muted-foreground">
@@ -1168,51 +1146,51 @@ const Index = () => {
                     </p>
 
                     <Tabs value={activeChart} onValueChange={(v) => setActiveChart(v as typeof activeChart)} className="w-full">
-                      <TabsList className="grid w-full grid-cols-3">
-                        <TabsTrigger value="position">위치</TabsTrigger>
-                        <TabsTrigger value="velocity">속력</TabsTrigger>
-                        <TabsTrigger value="acceleration">가속도</TabsTrigger>
+                      <TabsList className="grid w-full grid-cols-3 h-auto p-1">
+                        <TabsTrigger value="position" className="min-h-11">위치</TabsTrigger>
+                        <TabsTrigger value="velocity" className="min-h-11">속력</TabsTrigger>
+                        <TabsTrigger value="acceleration" className="min-h-11">가속도</TabsTrigger>
                       </TabsList>
 
-                      <TabsContent value="position" className="space-y-2">
+                      <TabsContent value="position">
                         <div className="h-64">
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={chartData} margin={CHART_MARGIN}>
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="time" label={X_AXIS_LABEL} />
-                              <YAxis label={yAxisLabel(`위치 (${units.pos})`)} />
+                              <CartesianGrid {...GRID_PROPS} />
+                              <XAxis {...TIME_AXIS} {...AXIS_PROPS} />
+                              <YAxis {...AXIS_PROPS} label={yAxisLabel(`위치 (${units.pos})`)} />
                               <Tooltip {...tooltipProps(units.pos)} />
-                              <Legend wrapperStyle={{ paddingTop: 16 }} />
-                              <Line type="monotone" dataKey="x" stroke="hsl(var(--primary))" name="X 위치" />
-                              <Line type="monotone" dataKey="y" stroke="hsl(var(--chart-2))" name="Y 위치" />
+                              <Legend wrapperStyle={{ paddingTop: 16, fontSize: 13 }} />
+                              <Line type="monotone" dataKey="x" stroke="hsl(var(--chart-1))" strokeWidth={2} dot={lineDot(chartData.length)} isAnimationActive={false} name="X 위치" />
+                              <Line type="monotone" dataKey="y" stroke="hsl(var(--chart-2))" strokeWidth={2} dot={lineDot(chartData.length)} isAnimationActive={false} name="Y 위치" />
                             </LineChart>
                           </ResponsiveContainer>
                         </div>
                       </TabsContent>
 
-                      <TabsContent value="velocity" className="space-y-2">
+                      <TabsContent value="velocity">
                         <div className="h-64">
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={chartData} margin={CHART_MARGIN}>
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="time" label={X_AXIS_LABEL} />
-                              <YAxis label={yAxisLabel(`속력 (${units.vel})`)} />
+                              <CartesianGrid {...GRID_PROPS} />
+                              <XAxis {...TIME_AXIS} {...AXIS_PROPS} />
+                              <YAxis {...AXIS_PROPS} label={yAxisLabel(`속력 (${units.vel})`)} />
                               <Tooltip {...tooltipProps(units.vel)} />
-                              <Line type="monotone" dataKey="speed" stroke="hsl(var(--primary))" name="속력" />
+                              <Line type="monotone" dataKey="speed" stroke="hsl(var(--chart-1))" strokeWidth={2} dot={lineDot(chartData.length)} isAnimationActive={false} name="속력" />
                             </LineChart>
                           </ResponsiveContainer>
                         </div>
                       </TabsContent>
 
-                      <TabsContent value="acceleration" className="space-y-2">
+                      <TabsContent value="acceleration">
                         <div className="h-64">
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={chartData} margin={CHART_MARGIN}>
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="time" label={X_AXIS_LABEL} />
-                              <YAxis label={yAxisLabel(`가속도의 크기 (${units.acc})`)} />
+                              <CartesianGrid {...GRID_PROPS} />
+                              <XAxis {...TIME_AXIS} {...AXIS_PROPS} />
+                              <YAxis {...AXIS_PROPS} label={yAxisLabel(`가속도의 크기 (${units.acc})`)} />
                               <Tooltip {...tooltipProps(units.acc)} />
-                              <Line type="monotone" dataKey="acceleration" stroke="hsl(var(--primary))" name="가속도의 크기" />
+                              <Line type="monotone" dataKey="acceleration" stroke="hsl(var(--chart-1))" strokeWidth={2} dot={lineDot(chartData.length)} isAnimationActive={false} name="가속도의 크기" />
                             </LineChart>
                           </ResponsiveContainer>
                         </div>
@@ -1220,76 +1198,54 @@ const Index = () => {
                     </Tabs>
 
                     <div className="pt-4 border-t border-border space-y-2">
-                      <p className="text-sm font-medium">분석 통계</p>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="p-2 bg-secondary rounded">
-                          <p className="text-muted-foreground">추적 장면</p>
-                          <p className="font-semibold">{trackedFrameCount} / {extractedFrames.length}개</p>
-                        </div>
-                        <div className="p-2 bg-secondary rounded">
-                          <p className="text-muted-foreground">분석 구간</p>
-                          <p className="font-semibold">{((motionData[motionData.length - 1]?.time ?? 0) - (motionData[0]?.time ?? 0)).toFixed(2)}s</p>
-                        </div>
-                        <div className="p-2 bg-secondary rounded">
-                          <p className="text-muted-foreground">최대 속력</p>
-                          <p className="font-semibold">{Math.max(...motionData.map((d) => d.speed)).toFixed(2)} {units.vel}</p>
-                        </div>
-                        <div className="p-2 bg-secondary rounded">
-                          <p className="text-muted-foreground">최대 가속도 크기</p>
-                          <p className="font-semibold">
-                            {validAccelerations.length > 0 ? `${Math.max(...validAccelerations).toFixed(2)} ${units.acc}` : '-'}
-                          </p>
-                        </div>
+                      <p className="text-sm font-semibold">분석 통계</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <StatTile label="추적 장면" value={`${trackedFrameCount} / ${extractedFrames.length}개`} />
+                        <StatTile
+                          label="분석 구간"
+                          value={`${((motionData[motionData.length - 1]?.time ?? 0) - (motionData[0]?.time ?? 0)).toFixed(2)} s`}
+                        />
+                        <StatTile label="최대 속력" value={`${Math.max(...motionData.map((d) => d.speed)).toFixed(2)} ${units.vel}`} />
+                        <StatTile
+                          label="최대 가속도 크기"
+                          value={validAccelerations.length > 0 ? `${Math.max(...validAccelerations).toFixed(2)} ${units.acc}` : '-'}
+                        />
                       </div>
                     </div>
 
                     <div className="pt-4 border-t border-border space-y-2">
-                      <p className="text-sm font-medium">다운로드</p>
+                      <p className="text-sm font-semibold">내려받기</p>
 
-                      <Button
-                        onClick={downloadCSV}
-                        className="w-full bg-gradient-primary hover:opacity-90"
-                        size="lg"
-                      >
+                      <Button onClick={downloadCSV} className="w-full" size="lg">
                         <Download className="w-4 h-4 mr-2" />
-                        CSV 파일 다운로드
+                        CSV 파일
                       </Button>
 
                       {isGeneratingVideo ? (
-                        <Button disabled className="w-full" size="lg">
-                          <Video className="w-4 h-4 mr-2 animate-spin" />
-                          영상 생성 중...
+                        <Button disabled variant="outline" className="w-full" size="lg">
+                          <Video className="w-4 h-4 mr-2 animate-pulse" />
+                          경로 영상 만드는 중...
                         </Button>
                       ) : videoWithROI ? (
-                        <Button
-                          onClick={downloadVideoWithROI}
-                          variant="outline"
-                          className="w-full"
-                          size="lg"
-                        >
+                        <Button onClick={downloadVideoWithROI} variant="outline" className="w-full" size="lg">
                           <Video className="w-4 h-4 mr-2" />
-                          경로 영상 다운로드
+                          경로 영상
                         </Button>
                       ) : null}
                     </div>
                   </>
                 ) : (
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">
-                      물체 지정을 완료하면 분석 결과가 표시됩니다
-                    </p>
-                    {manualFrames.size > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        {manualFrames.size}개 장면에 위치가 지정되었습니다
-                      </p>
-                    )}
-                  </div>
+                  <EmptyStep
+                    text={manualFrames.size > 0
+                      ? `${manualFrames.size}개 장면에 물체를 지정했어요. 4단계에서 「물체 지정 완료」를 누르면 결과가 나와요.`
+                      : '4단계에서 물체를 지정하면 결과가 나와요.'}
+                  />
                 )}
               </TabsContent>
             </Card>
           </div>
         </Tabs>
-      </div>
+      </main>
     </div>
   );
 };

@@ -16,7 +16,8 @@ const Slider = React.forwardRef<
       ref={ref}
       value={value}
       defaultValue={defaultValue}
-      className={cn("relative flex w-full touch-none select-none items-center", className)}
+      // 폰에서 손가락으로 잡기 쉽게: 막대 어디를 눌러도 가까운 핸들이 오므로 누를 수 있는 띠를 44px로
+      className={cn("relative flex w-full min-h-11 touch-none select-none items-center", className)}
       {...props}
     >
       <SliderPrimitive.Track className="relative h-2 w-full grow overflow-hidden rounded-full bg-secondary">
@@ -25,7 +26,7 @@ const Slider = React.forwardRef<
       {Array.from({ length: thumbCount }).map((_, i) => (
         <SliderPrimitive.Thumb
           key={i}
-          className="block h-5 w-5 rounded-full border-2 border-primary bg-background ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+          className="block h-6 w-6 rounded-full border-2 border-primary bg-background ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
         />
       ))}
     </SliderPrimitive.Root>

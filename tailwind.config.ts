@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss";
 
 export default {
-    darkMode: ["class"],
+    darkMode: "media", // 휴대폰의 라이트/다크 설정을 따른다 (index.css의 토큰과 같은 기준)
     content: ["./pages/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./app/**/*.{ts,tsx}", "./src/**/*.{ts,tsx}"],
     prefix: "",
     theme: {
@@ -94,8 +94,9 @@ export default {
                             "accordion-up": "accordion-up 0.2s ease-out",
                             "pulse-glow": "pulse-glow 2s ease-in-out infinite",
                   },
-                  backgroundImage: {
-                            "gradient-primary": "var(--gradient-primary)",
+                  fontFamily: {
+                            // Pretendard를 못 받아 오면 기기 기본 글꼴로
+                            sans: ["Pretendard Variable", "Pretendard", "-apple-system", "BlinkMacSystemFont", "system-ui", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "sans-serif"],
                   },
           },
     },

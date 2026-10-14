@@ -35,8 +35,9 @@ export const FrameTrimmer = ({ frames, fps, currentFrameIndex, onSeek, onApply, 
 
   const [start, end] = range;
   const selectedCount = end - start + 1;
-  const selectedSeconds = selectedCount / fps;
-  const totalSeconds = frames.length / fps;
+  // 첫 장면부터 끝 장면까지 걸린 시간 (결과 화면의 「분석 구간」과 같은 셈법)
+  const selectedSeconds = (selectedCount - 1) / fps;
+  const totalSeconds = (frames.length - 1) / fps;
 
   // 필름스트립: 프레임이 많을 때(수백 개) 전부 그리면 느리므로, 균등 간격으로 최대
   // MAX_THUMBNAILS 장만 샘플링해 하나의 캔버스에 이어 붙여 그린다.
@@ -123,7 +124,7 @@ export const FrameTrimmer = ({ frames, fps, currentFrameIndex, onSeek, onApply, 
         </p>
         <button
           onClick={resetRange}
-          className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+          className="min-h-11 px-2 -mr-2 text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
         >
           <RotateCcw className="w-3 h-3" />
           전체로 초기화
@@ -161,18 +162,18 @@ export const FrameTrimmer = ({ frames, fps, currentFrameIndex, onSeek, onApply, 
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-1">
           <canvas ref={startPreviewRef} className="w-full rounded border border-border bg-black" />
-          <div className="flex items-center justify-between">
+          <div className="space-y-1">
             <p className="text-xs text-muted-foreground">시작: #{start + 1}</p>
-            <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={setStartToCurrent}>
+            <Button size="sm" variant="outline" className="h-11 w-full px-2 text-xs" onClick={setStartToCurrent}>
               현재 장면으로
             </Button>
           </div>
         </div>
         <div className="space-y-1">
           <canvas ref={endPreviewRef} className="w-full rounded border border-border bg-black" />
-          <div className="flex items-center justify-between">
+          <div className="space-y-1">
             <p className="text-xs text-muted-foreground">끝: #{end + 1}</p>
-            <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={setEndToCurrent}>
+            <Button size="sm" variant="outline" className="h-11 w-full px-2 text-xs" onClick={setEndToCurrent}>
               현재 장면으로
             </Button>
           </div>
@@ -180,21 +181,21 @@ export const FrameTrimmer = ({ frames, fps, currentFrameIndex, onSeek, onApply, 
       </div>
 
       <p className="text-xs text-muted-foreground">
-        선택 구간: {selectedCount}개 장면 ({selectedSeconds.toFixed(1)}s / 전체 {totalSeconds.toFixed(1)}s)
+        선택 구간: {selectedCount}개 장면 ({selectedSeconds.toFixed(2)} s / 전체 {totalSeconds.toFixed(2)} s)
       </p>
 
       <div className="flex gap-2">
         <Button
           onClick={onSkip}
           variant="outline"
-          className="flex-1"
+          className="flex-1 h-11"
         >
           자르지 않고 계속
         </Button>
         <Button
           onClick={() => onApply(start, end)}
           disabled={start === 0 && end === lastIndex}
-          className="flex-1 bg-gradient-primary hover:opacity-90"
+          className="flex-1 h-11"
         >
           <Scissors className="w-4 h-4 mr-2" />
           적용하고 계속
